@@ -1,0 +1,186 @@
+{
+ "device": "Samsung Galaxy A71 (SM-A715F), Snapdragon 730 (sm6150: 2x Cortex-A76 2.2 GHz + 6x A55 1.8 GHz), Android 11",
+ "date": "2026-11-15",
+ "pinning": "taskset c0 (big cores cpu6-7, Cortex-A76)",
+ "little_cores_mix": {
+  "pinning": "taskset 3f (cpu0-5, Cortex-A55)",
+  "dyncom_mips": 23.7,
+  "dyncom_realtime_pct": 11.2,
+  "fastinterp_mips": 51.8,
+  "fastinterp_realtime_pct": 24.5
+ },
+ "target": "native-android-arm64",
+ "workloads": [
+  {
+   "id": 0,
+   "name": "entities (game logic)",
+   "iters": 4000,
+   "instructions": 43193134,
+   "fi_ticks": 51341604,
+   "dyncom": {
+    "seconds": 0.535047,
+    "mips": 80.73,
+    "realtime_pct": 35.79,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 0.269966,
+    "mips": 159.99,
+    "realtime_pct": 70.93,
+    "ok": true
+   }
+  },
+  {
+   "id": 1,
+   "name": "crc32 (table lookups)",
+   "iters": 2000,
+   "instructions": 65614541,
+   "fi_ticks": 73821925,
+   "dyncom": {
+    "seconds": 0.737285,
+    "mips": 88.99,
+    "realtime_pct": 37.35,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 0.374478,
+    "mips": 175.22,
+    "realtime_pct": 73.53,
+    "ok": true
+   }
+  },
+  {
+   "id": 2,
+   "name": "shellsort",
+   "iters": 300,
+   "instructions": 50065102,
+   "fi_ticks": 92426030,
+   "dyncom": {
+    "seconds": 0.6342,
+    "mips": 78.94,
+    "realtime_pct": 54.36,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 0.304612,
+    "mips": 164.36,
+    "realtime_pct": 113.17,
+    "ok": true
+   }
+  },
+  {
+   "id": 3,
+   "name": "vertex xform (VFP)",
+   "iters": 2000,
+   "instructions": 64474570,
+   "fi_ticks": 122993970,
+   "dyncom": {
+    "seconds": 2.457644,
+    "mips": 26.23,
+    "realtime_pct": 18.67,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 0.249175,
+    "mips": 258.75,
+    "realtime_pct": 184.1,
+    "ok": true
+   }
+  },
+  {
+   "id": 4,
+   "name": "bytecode VM (script)",
+   "iters": 1200,
+   "instructions": 57285738,
+   "fi_ticks": 100571927,
+   "dyncom": {
+    "seconds": 0.910541,
+    "mips": 62.91,
+    "realtime_pct": 41.2,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 0.418554,
+    "mips": 136.87,
+    "realtime_pct": 89.62,
+    "ok": true
+   }
+  },
+  {
+   "id": 5,
+   "name": "block copy (ldm/stm)",
+   "iters": 8000,
+   "instructions": 43212888,
+   "fi_ticks": 47404468,
+   "dyncom": {
+    "seconds": 0.513725,
+    "mips": 84.12,
+    "realtime_pct": 34.42,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 0.196312,
+    "mips": 220.12,
+    "realtime_pct": 90.07,
+    "ok": true
+   }
+  },
+  {
+   "id": 6,
+   "name": "crc32 [thumb]",
+   "iters": 1200,
+   "instructions": 49230143,
+   "fi_ticks": 49245528,
+   "dyncom": {
+    "seconds": 0.520122,
+    "mips": 94.65,
+    "realtime_pct": 35.31,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 0.228998,
+    "mips": 214.98,
+    "realtime_pct": 80.21,
+    "ok": true
+   }
+  },
+  {
+   "id": 7,
+   "name": "bytecode VM [thumb]",
+   "iters": 1200,
+   "instructions": 88766544,
+   "fi_ticks": 88781929,
+   "dyncom": {
+    "seconds": 1.199598,
+    "mips": 74.0,
+    "realtime_pct": 27.6,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 0.478766,
+    "mips": 185.41,
+    "realtime_pct": 69.16,
+    "ok": true
+   }
+  },
+  {
+   "id": 8,
+   "name": "mix (all of the above)",
+   "iters": 60,
+   "instructions": 220402294,
+   "fi_ticks": 279702165,
+   "dyncom": {
+    "seconds": 3.221557,
+    "mips": 68.41,
+    "realtime_pct": 32.38,
+    "ok": true
+   },
+   "fastinterp": {
+    "seconds": 1.296453,
+    "mips": 170.0,
+    "realtime_pct": 80.47,
+    "ok": true
+   }
+  }
+ ]
+}

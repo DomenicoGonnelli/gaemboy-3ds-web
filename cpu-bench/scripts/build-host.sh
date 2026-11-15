@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds the CPU benchmark harness around Azahar's real ARM11 interpreters.
 #   build-host.sh native   -> build/native/cpu_bench          (Apple clang, -O3)
+#   build-host.sh android  -> build/android/cpu_bench         (NDK clang -O3, arm64, run via adb)
 #   build-host.sh node     -> build/node/cpu_bench.js         (emcc -O3, NODERAWFS, runs in V8)
 #   build-host.sh web      -> build/web/ (index.html + worker + wasm; run build-guest.sh first)
 set -euo pipefail
@@ -39,6 +40,13 @@ CXXFLAGS=(-std=c++20 -O3 -DNDEBUG -I"$HERE/stubs" -I"$AZ"
 case "$TARGET" in
   native)
     clang++ "${CXXFLAGS[@]}" -DPOC_TARGET='"native-'"$(uname -m)"'"' \
+      "${CORE_SRCS[@]}" "$HERE/host/main_cli.cpp" -o "$OUT/cpu_bench"
+    ;;
+  android)
+    # Native arm64 Android binary (run via adb) to compare against Chrome/WASM on the same phone.
+    NDK="${ANDROID_NDK:-$(ls -d "$HOME"/Library/Android/sdk/ndk/* | sort -V | tail -1)}"
+    "$NDK"/toolchains/llvm/prebuilt/*/bin/aarch64-linux-android30-clang++ "${CXXFLAGS[@]}" \
+      -DPOC_TARGET='"native-android-arm64"' -static-libstdc++ \
       "${CORE_SRCS[@]}" "$HERE/host/main_cli.cpp" -o "$OUT/cpu_bench"
     ;;
   node)

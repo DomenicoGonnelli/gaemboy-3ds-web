@@ -12,10 +12,11 @@ Domanda: un interprete ARM11 compilato in WebAssembly regge il tempo reale di un
 | L'interprete ARM11 compila e gira in WASM? | **Sì**: gli interpreti reali di Azahar (DynCom e FastInterp) compilano con Emscripten **senza modificarne il codice**. Tutti i checksum corrispondono al riferimento nativo. |
 | Velocità in browser (desktop M2 Pro) | **FastInterp: 130% del tempo reale 3DS in Chrome, 145% in Safari** (mix di carichi, CPU emulata al 100% di carico). |
 | Velocità in browser (iPhone, Safari 27, HTTPS) | **FastInterp: 119% del tempo reale 3DS** (251 MIPS). È l'82% di Safari su M2 Pro, quasi alla pari con Chrome desktop. |
+| Velocità in browser (Galaxy A71, Snapdragon 730, Chrome 157) | **FastInterp: 37%** (79 MIPS), stabile su 3 esecuzioni. Lo stesso codice nativo sul core A76 fa 80% (170 MIPS): su Android il WASM conserva solo il 46% del nativo. |
 | Costo del passaggio a WASM | Si conserva il **67–75% della velocità nativa**. |
 | DynCom (interprete classico Citra) | 65–66%: **insufficiente** (soprattutto in virgola mobile: 40%). |
-| Verdetto CPU | **GO condizionato per desktop e iPhone recenti**: la CPU tiene il tempo reale con ~20–45% di margine, ma il margine va condiviso con GPU, audio e HLE. Android di fascia media resta da misurare. |
-| App Android nativa | **Strada più sicura**: Azahar con JIT Dynarmic su ARM64, stessa architettura già usata per melonDS nativo. |
+| Verdetto CPU | **GO condizionato per desktop e iPhone recenti**: la CPU tiene il tempo reale con ~20–45% di margine, ma il margine va condiviso con GPU, audio e HLE. **NO-GO nel browser per Android di fascia media** (A71: 37%). |
+| App Android nativa | **Strada giusta per Android**: sull'A71 anche il solo *interprete* nativo arriva all'80%. Con il JIT Dynarmic di Azahar il margine è molto più ampio. È la stessa architettura già usata per melonDS nativo. |
 
 ## Cosa è stato misurato
 
@@ -55,6 +56,27 @@ headless, WebKit 27.2 (motore di Safari) via Playwright. iPhone = il telefono de
 modello), Safari 27.0.1 via HTTPS, JIT verificato attivo, test eseguito a mano: `wasm-iphone-safari.json`.
 Node 22 (V8 meno recente) dà 107% sul mix, vedi `wasm-node.json`.
 
+### Samsung Galaxy A71 (Snapdragon 730), Android 11
+
+Chrome 157 via `adb reverse` (`http://localhost`, contesto sicuro, JIT verificato), termica nominale (stato 0, 27 °C).
+Nativo = stesso harness compilato con l'NDK (`build-host.sh android`) ed eseguito con `taskset` sui due core A76.
+JSON: `wasm-galaxy-a71-chrome.json`, `native-galaxy-a71.json`.
+
+| Workload | Chrome FI | Nativo A76 FI | Chrome DC | Nativo A76 DC |
+|---|---|---|---|---|
+| entities (game logic) | 30% (69) | 71% (160) | 14% (32) | 36% (81) |
+| crc32 (table lookups) | 32% (77) | 74% (175) | 17% (40) | 37% (89) |
+| shellsort | 55% (79) | 113% (164) | 25% (37) | 54% (79) |
+| vertex xform (VFP) | 74% (104) | 184% (259) | 11% (16) | 19% (26) |
+| bytecode VM (script) | 44% (67) | 90% (137) | 22% (34) | 41% (63) |
+| block copy (ldm/stm) | 34% (84) | 90% (220) | 13% (33) | 34% (84) |
+| crc32 [thumb] | 32% (86) | 80% (215) | 16% (42) | 35% (95) |
+| bytecode VM [thumb] | 31% (82) | 69% (185) | 14% (39) | 28% (74) |
+| **mix** | **37% (79)** | **80% (170)** | 17% (37) | 32% (68) |
+
+Sui core lenti (A55, `taskset 3f`) il mix nativo scende a FI 24% (52 MIPS). Chrome (79 MIPS) quindi gira sul core
+veloce. Il rapporto WASM/nativo sull'A71 è 0,46, contro 0,67–0,75 sul Mac.
+
 ## Lettura dei risultati
 
 1. **Il "muro" CPU/JIT non è un muro.** Non serve inventare un percorso CPU: Azahar ha già FastInterp,
@@ -70,11 +92,14 @@ Node 22 (V8 meno recente) dà 107% sul mix, vedi `wasm-node.json`.
    (83%). Quindi su un iPhone recente il budget CPU è dello stesso ordine del desktop.
    Restano due incognite:
    - (a) **throttling termico**: il test dura ~20 s, una sessione di gioco molto di più;
-   - (b) **Android di fascia media**, ancora da misurare. Le CPU di quella fascia sono di norma molto più lente
-     degli iPhone recenti nel single-thread.
+   - (b) **Android di fascia media: misurato, ed è insufficiente.** Il Galaxy A71 (Snapdragon 730) fa **37%** in Chrome.
+     La penalità dipende da due fattori: la CPU è ~3 volte più lenta di un iPhone recente, e il WASM su Android/V8
+     conserva meno velocità (46% del nativo contro 67–75% sul Mac).
 
-   Un **JIT ARM→WASM** (blocchi ARM tradotti in moduli WebAssembly a runtime, come fanno v86 o Play! per PS2)
-   resta l'unico modo per avere margine ampio sui telefoni, ma non è un prerequisito per gli iPhone recenti.
+   Sul web mobile il 3DS è quindi realistico solo sugli iPhone recenti e, da verificare, sugli Android di fascia alta.
+   Per la fascia media servirebbe un **JIT ARM→WASM** (blocchi ARM tradotti in moduli WebAssembly a runtime, come
+   fanno v86 o Play! per PS2). Dovrebbe dare un ordine di grandezza in più, ed è R&D di mesi.
+   La soluzione pratica per Android è l'app nativa: sull'A71 anche l'interprete nativo arriva all'80%.
 4. **Safari/WebKit disattiva il JIT nei contesti non sicuri.** Su `http://<IP-LAN>`, che non è HTTPS né localhost,
    WebKit esegue JavaScript e WASM senza JIT: in un ciclo JS fa 36 M it/s contro ~950 su localhost o HTTPS, e FastInterp
    scende da ~290 a 9 MIPS. Chromium non lo fa. Lo stesso effetto si ha con la Modalità di isolamento di iOS.
@@ -91,7 +116,7 @@ Node 22 (V8 meno recente) dà 107% sul mix, vedi `wasm-node.json`.
 |---|---|
 | Candidato principale: **Panda3DS → WASM** | Panda3DS ha **solo Dynarmic** (`src/core/CPU/` contiene soltanto `cpu_dynarmic.cpp`), quindi in WASM non ha alcun percorso CPU. Andrebbe scritto o portato un interprete. **Azahar diventa il candidato principale**: ha un interprete veloce, già funzionante e misurato. |
 | Azahar "più impegnativo da portare" | Vero per le dimensioni, ma Azahar ha già un target `ENABLE_LIBRETRO`, cioè core senza frontend con opzioni incompatibili disattivate automaticamente: il punto di partenza naturale per Emscripten. |
-| "Interpreter/fallback → WASM ?" | **Risposto: sì**, con il 130–145% del tempo reale su desktop e il 119% su iPhone (Safari, HTTPS). |
+| "Interpreter/fallback → WASM ?" | **Risposto: sì su desktop (130–145%) e iPhone recenti (119%); no su Android di fascia media (A71: 37%).** |
 | "Se gira Switch 2, gira 3DS" | Non vale per il web. Gli emulatori Switch su PC e Android eseguono il codice ARM64 del gioco **nativamente** (NCE) o tramite JIT verso codice macchina. Nel browser non si può generare codice macchina: si esegue solo WASM. Per questo nel web conta l'interprete, e questi numeri sono quelli rilevanti. |
 
 ## Raccomandazione
@@ -99,6 +124,9 @@ Node 22 (V8 meno recente) dà 107% sul mix, vedi `wasm-node.json`.
 **Traccia A — App Android nativa (alta fattibilità).** Integrare il core di Azahar con Dynarmic ARM64 come libreria
 JNI nell'app Flutter, con lo stesso schema di `nds_native` (melonDS v1.x + JIT). Azahar Android gira già su
 Snapdragon 835 e successivi. Il lavoro è di integrazione (bridge, input, superfici GL/Vulkan, save), non di ricerca.
+Misurato sul Galaxy A71: l'interprete FastInterp **nativo** fa già l'80% del tempo reale. Dynarmic, il JIT che Azahar
+usa su Android, va molto oltre. Inoltre lo Snapdragon 730 (Cortex-A76) è più veloce in single-thread dello
+Snapdragon 835 (Cortex-A73) indicato da Azahar come minimo: questa è un'inferenza, da confermare con un boot reale.
 Nota licenze: Azahar è GPLv2-or-later, compatibile con la GPLv3 di melonDS che l'app già incorpora.
 
 **Traccia B — Web desktop (fattibilità media, prossimo POC).** Azahar (`ENABLE_LIBRETRO`-like, senza Qt, SDL, web
@@ -114,8 +142,10 @@ diviso tra CPU, GPU e HLE.
 
 **Traccia C — Web mobile.** Gli iPhone recenti hanno un budget CPU simile al desktop, quindi possono seguire la
 traccia B quando il renderer WebGL2 funziona, con un controllo sul throttling termico in sessioni lunghe.
-Per Android di fascia media serve prima una misura; se è sotto il 100%, l'unica leva è un JIT ARM→WASM sopra
-FastInterp, che fornirebbe già i blocchi decodificati. È R&D da valutare solo se B dà buoni risultati.
+Gli Android di fascia media (A71: 37%) nel browser non bastano. Su Android conviene indirizzare gli utenti all'app
+(traccia A); per gli Android di fascia alta va fatta una misura.
+Un JIT ARM→WASM sopra FastInterp, che fornirebbe già i blocchi decodificati, è R&D da valutare solo se B dà buoni
+risultati.
 
 ## Prova sul telefono
 
@@ -146,6 +176,7 @@ cd cpu-bench
 ./scripts/build-host.sh native && ./build/native/cpu_bench build/guest/bench.bin build/guest/expected.txt
 ./scripts/build-host.sh node   && node build/node/cpu_bench.js build/guest/bench.bin build/guest/expected.txt
 ./scripts/build-host.sh web                    # -> build/web/ (pagina + worker + wasm)
+./scripts/build-host.sh android                # nativo arm64 (NDK); adb push + taskset per i core veloci
 (cd build/web && python3 -m http.server 8765) &
 PLAYWRIGHT=/path/to/node_modules/playwright node scripts/run-browsers.mjs http://127.0.0.1:8765/
 ```

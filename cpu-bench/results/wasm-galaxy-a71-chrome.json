@@ -1,0 +1,154 @@
+{
+ "device": "Samsung Galaxy A71 (SM-A715F), Snapdragon 730 (sm6150: 2x Cortex-A76 2.2 GHz + 6x A55 1.8 GHz), Android 11",
+ "date": "2026-11-15",
+ "browser": "Chrome 157.0.8103.50 via adb reverse (http://localhost, secure context)",
+ "thermal_status": 0,
+ "userAgent": "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/157.0.0.0 Mobile Safari/537.36",
+ "cores": 8,
+ "jit": {
+  "mops": 671,
+  "enabled": true,
+  "sink": 1
+ },
+ "results": [
+  {
+   "id": 0,
+   "name": "entities (game logic)",
+   "instructions": 43193134,
+   "dyncom": {
+    "mips": 31.975965353864375,
+    "rt": 14.176282582629389,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 68.61498649722003,
+    "rt": 30.419892792082255,
+    "ok": true
+   }
+  },
+  {
+   "id": 1,
+   "name": "crc32 (table lookups)",
+   "instructions": 65614541,
+   "dyncom": {
+    "mips": 40.209916043632795,
+    "rt": 16.87339284843846,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 77.06664435048155,
+    "rt": 32.33967870575743,
+    "ok": true
+   }
+  },
+  {
+   "id": 2,
+   "name": "shellsort",
+   "instructions": 50065102,
+   "dyncom": {
+    "mips": 36.66698549875495,
+    "rt": 25.24750003609828,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 79.41799175126904,
+    "rt": 54.6842267596583,
+    "ok": true
+   }
+  },
+  {
+   "id": 3,
+   "name": "vertex xform (VFP)",
+   "instructions": 64474570,
+   "dyncom": {
+    "mips": 15.933416532806127,
+    "rt": 11.336741816484988,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 103.90744560838033,
+    "rt": 73.93090372345931,
+    "ok": true
+   }
+  },
+  {
+   "id": 4,
+   "name": "bytecode VM (script)",
+   "instructions": 57285738,
+   "dyncom": {
+    "mips": 33.70939037307285,
+    "rt": 22.073191875437285,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 66.82111046308177,
+    "rt": 43.755024230862155,
+    "ok": true
+   }
+  },
+  {
+   "id": 5,
+   "name": "block copy (ldm/stm)",
+   "instructions": 43212888,
+   "dyncom": {
+    "mips": 32.77676577669903,
+    "rt": 13.4108425474565,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 83.50316521739131,
+    "rt": 34.1659030233172,
+    "ok": true
+   }
+  },
+  {
+   "id": 6,
+   "name": "crc32 [thumb]",
+   "instructions": 49230143,
+   "dyncom": {
+    "mips": 42.272147518461274,
+    "rt": 15.771536064728968,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 86.45968212153143,
+    "rt": 32.25769389003048,
+    "ok": true
+   }
+  },
+  {
+   "id": 7,
+   "name": "bytecode VM [thumb]",
+   "instructions": 88766544,
+   "dyncom": {
+    "mips": 38.78470048499148,
+    "rt": 14.468372723388372,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 81.77479871027178,
+    "rt": 30.505540904669708,
+    "ok": true
+   }
+  },
+  {
+   "id": 8,
+   "name": "mix (all of the above)",
+   "instructions": 220402294,
+   "dyncom": {
+    "mips": 36.69701864801864,
+    "rt": 17.36978652781287,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 78.79671588430875,
+    "rt": 37.29682095243077,
+    "ok": true
+   }
+  }
+ ],
+ "repeat_mix_fastinterp_mips": [
+  77,
+  79
+ ]
+}
