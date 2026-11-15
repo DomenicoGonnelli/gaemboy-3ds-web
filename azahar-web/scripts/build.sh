@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Builds Azahar (libretro core, software renderer, FastInterp CPU) + the GAEMBOY web frontend
+# with Emscripten into azahar-web/dist/{gaemboy3ds.js,gaemboy3ds.wasm} and copies the web page.
+#   usage: scripts/build.sh [--reconfigure]
+set -euo pipefail
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$HERE/.." && pwd)"
+AZ="$ROOT/third_party/azahar-full"
+BUILD="$ROOT/build-azahar-wasm"
+DIST="$HERE/dist"
+export PATH="/opt/homebrew/bin:$PATH"
+# shellcheck disable=SC1091
+source "$HOME/emsdk/emsdk_env.sh" >/dev/null 2>&1
+
+# Native wasm exceptions/longjmp: the core uses C++ exceptions (default Emscripten would abort).
+CFLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm"
+LINK_FLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm \
+ -sPROXY_TO_PTHREAD=1 -sPTHREAD_POOL_SIZE=8 \
+ -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=1024MB -sMAXIMUM_MEMORY=4GB \
+ -sSTACK_SIZE=8MB -sDEFAULT_PTHREAD_STACK_SIZE=2MB \
+ -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createGaemboy3DS -sENVIRONMENT=web,worker \
+ -sFORCE_FILESYSTEM=1 -sEXPORTED_FUNCTIONS=_main,_gb3ds_state,_gb3ds_state_size \
+ -sEXPORTED_RUNTIME_METHODS=FS,wasmMemory"
+# PROFILE=1 keeps wasm function names for DevTools profiles (optimization level unchanged).
+if [ "${PROFILE:-0}" = "1" ]; then
+  LINK_FLAGS="$LINK_FLAGS --profiling-funcs"
+fi
+
+if [ ! -f "$BUILD/CMakeCache.txt" ] || [ "${1:-}" = "--reconfigure" ] || [ -n "${PROFILE:-}" ]; then
+  emcmake cmake -S "$AZ" -B "$BUILD" \
+    -DCMAKE_BUILD_TYPE=Release -DENABLE_GENERIC=ON -DENABLE_LIBRETRO=ON \
+    -DENABLE_OPENGL=OFF -DENABLE_VULKAN=OFF -DENABLE_SOFTWARE_RENDERER=ON \
+    -DENABLE_TESTS=OFF -DENABLE_LTO=OFF -DCITRA_WARNINGS_AS_ERRORS=OFF \
+    -DCITRA_USE_PRECOMPILED_HEADERS=OFF -DENABLE_MICROPROFILE=OFF \
+    -DCMAKE_C_FLAGS="$CFLAGS" -DCMAKE_CXX_FLAGS="$CFLAGS" \
+    -DGAEMBOY3DS_FRONTEND="$HERE/frontend/gaemboy3ds_web.cpp" \
+    -DGAEMBOY3DS_LINK_FLAGS="$LINK_FLAGS"
+fi
+
+make -C "$BUILD" -j"$(sysctl -n hw.ncpu)" gaemboy3ds
+
+mkdir -p "$DIST"
+cp "$BUILD"/bin/Release/gaemboy3ds.js "$BUILD"/bin/Release/gaemboy3ds.wasm "$DIST"/
+cp "$HERE"/web/* "$DIST"/
+ls -la "$DIST"

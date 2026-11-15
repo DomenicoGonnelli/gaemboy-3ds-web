@@ -1,0 +1,231 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index e99de6a..2474c17 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -317,7 +317,7 @@ function(check_submodules_present)
+         endif()
+     endforeach()
+ endfunction()
+-if (EXISTS "${PROJECT_SOURCE_DIR}/.git/objects")
++if (EXISTS "${PROJECT_SOURCE_DIR}/.git/objects" AND NOT EMSCRIPTEN)
+     # only check submodules when source is obtained via Git
+     check_submodules_present()
+ endif()
+@@ -389,7 +389,9 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN NO)
+ # set up output paths for executable binaries
+ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_BINARY_DIR}/bin/$<CONFIG>)
+ 
+-if (ENABLE_LIBRETRO)
++# GAEMBOY wasm: the web build links the core statically into one module, so no PIC (GOT access
++# would slow down every global in the hot paths).
++if (ENABLE_LIBRETRO AND NOT EMSCRIPTEN)
+   set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+ endif()
+ 
+diff --git a/externals/CMakeLists.txt b/externals/CMakeLists.txt
+index cfb63c3..bb2d6f6 100644
+--- a/externals/CMakeLists.txt
++++ b/externals/CMakeLists.txt
+@@ -540,3 +540,10 @@ if(NOT USE_SYSTEM_XXHASH)
+         message(STATUS "Disabling SIMD for xxHash")
+     endif()
+ endif()
++
++# GAEMBOY wasm: robin-map normally comes bundled with dynarmic, which is not built on GENERIC targets
++if (NOT TARGET tsl::robin_map AND EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/robin-map/include)
++    add_library(robin_map INTERFACE)
++    target_include_directories(robin_map INTERFACE ./robin-map/include)
++    add_library(tsl::robin_map ALIAS robin_map)
++endif()
+diff --git a/src/citra_libretro/CMakeLists.txt b/src/citra_libretro/CMakeLists.txt
+index e28f994..7700ec6 100644
+--- a/src/citra_libretro/CMakeLists.txt
++++ b/src/citra_libretro/CMakeLists.txt
+@@ -99,3 +99,17 @@ else()
+ endif()
+ 
+ add_custom_target(azahar_libretro DEPENDS citra_libretro)
++
++# GAEMBOY wasm: standalone Emscripten executable = Azahar libretro core + a minimal web frontend
++# (GAEMBOY3DS_FRONTEND points at gaemboy3ds_web.cpp, link flags come from GAEMBOY3DS_LINK_FLAGS).
++if (EMSCRIPTEN AND DEFINED GAEMBOY3DS_FRONTEND)
++    add_executable(gaemboy3ds
++            ${GAEMBOY3DS_FRONTEND}
++            citra_libretro.cpp
++            $<TARGET_OBJECTS:citra_libretro_common>)
++    target_compile_definitions(gaemboy3ds PRIVATE HAVE_LIBRETRO)
++    target_link_libraries(gaemboy3ds PRIVATE citra_common citra_core video_core audio_core
++            input_common Boost::boost dds-ktx libretro tsl::robin_map Threads::Threads)
++    separate_arguments(_gaemboy3ds_link_flags UNIX_COMMAND "${GAEMBOY3DS_LINK_FLAGS}")
++    target_link_options(gaemboy3ds PRIVATE ${_gaemboy3ds_link_flags})
++endif()
+diff --git a/src/citra_libretro/emu_window/libretro_window.cpp b/src/citra_libretro/emu_window/libretro_window.cpp
+index 307e14a..46510dc 100644
+--- a/src/citra_libretro/emu_window/libretro_window.cpp
++++ b/src/citra_libretro/emu_window/libretro_window.cpp
+@@ -130,6 +130,9 @@ void EmuWindow_LibRetro::SwapBuffers() {
+             // Landscape display dimensions (transposed from portrait storage)
+             const u32 native_w = info.height;
+             const u32 native_h = info.width;
++            // 800px wide mode squeezed into a 400px rect: average column pairs instead of
++            // dropping every other column.
++            const bool halve_x = native_w == rect_w * 2;
+ 
+             for (u32 oy = 0; oy < rect_h; oy++) {
+                 for (u32 ox = 0; ox < rect_w; ox++) {
+@@ -145,9 +148,15 @@ void EmuWindow_LibRetro::SwapBuffers() {
+                                            static_cast<size_t>(rect.left + ox) * 4;
+ 
+                     // RGBA -> XRGB8888 (little-endian: B, G, R, 0)
+-                    data[dst_off + 0] = src[2];
+-                    data[dst_off + 1] = src[1];
+-                    data[dst_off + 2] = src[0];
++                    if (halve_x && src_off + 7 < info.pixels.size()) {
++                        data[dst_off + 0] = static_cast<u8>((src[2] + src[6] + 1) >> 1);
++                        data[dst_off + 1] = static_cast<u8>((src[1] + src[5] + 1) >> 1);
++                        data[dst_off + 2] = static_cast<u8>((src[0] + src[4] + 1) >> 1);
++                    } else {
++                        data[dst_off + 0] = src[2];
++                        data[dst_off + 1] = src[1];
++                        data[dst_off + 2] = src[0];
++                    }
+                     data[dst_off + 3] = 0;
+                 }
+             }
+diff --git a/src/common/expected.h b/src/common/expected.h
+index 485cf54..b0d8d99 100644
+--- a/src/common/expected.h
++++ b/src/common/expected.h
+@@ -73,7 +73,7 @@ struct expected_storage_base {
+ 
+     template <typename... Args, std::enable_if_t<std::is_constructible_v<T, Args&&...>>* = nullptr>
+     constexpr expected_storage_base(std::in_place_t, Args&&... args)
+-        : m_val{std::forward<Args>(args)...}, m_has_val{true} {}
++        : m_val(std::forward<Args>(args)...), m_has_val{true} {}
+ 
+     template <typename U, typename... Args,
+               std::enable_if_t<std::is_constructible_v<T, std::initializer_list<U>&, Args&&...>>* =
+@@ -120,7 +120,7 @@ struct expected_storage_base<T, E, true> {
+ 
+     template <typename... Args, std::enable_if_t<std::is_constructible_v<T, Args&&...>>* = nullptr>
+     constexpr expected_storage_base(std::in_place_t, Args&&... args)
+-        : m_val{std::forward<Args>(args)...}, m_has_val{true} {}
++        : m_val(std::forward<Args>(args)...), m_has_val{true} {}
+ 
+     template <typename U, typename... Args,
+               std::enable_if_t<std::is_constructible_v<T, std::initializer_list<U>&, Args&&...>>* =
+diff --git a/src/common/tar_file.cpp b/src/common/tar_file.cpp
+index 09db65d..41c9347 100644
+--- a/src/common/tar_file.cpp
++++ b/src/common/tar_file.cpp
+@@ -112,7 +112,9 @@ struct TarArchiveImpl {
+                     return Fail();
+                 }
+                 file_infos.emplace_back(TarArchive::TarFileInfo{
+-                    .name = std::string(name), .position = position, .size = h.size});
++                    .name = std::string(name),
++                    .position = static_cast<std::size_t>(position),
++                    .size = static_cast<std::size_t>(h.size)});
+             }
+ 
+             if (mtar_next(&tar) != MTAR_ESUCCESS) {
+diff --git a/src/common/thread.cpp b/src/common/thread.cpp
+index cad2108..8bcd745 100644
+--- a/src/common/thread.cpp
++++ b/src/common/thread.cpp
+@@ -98,6 +98,8 @@ void SetCurrentThreadName(const char* name) {
+     pthread_set_name_np(pthread_self(), name);
+ #elif defined(__NetBSD__)
+     pthread_setname_np(pthread_self(), "%s", (void*)name);
++#elif defined(__EMSCRIPTEN__)
++    (void)name; // no thread names in browser workers
+ #elif defined(__linux__)
+     // Linux limits thread names to 15 characters and will outright reject any
+     // attempt to set a longer name with ERANGE.
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 814863e..d2c1caa 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -577,6 +577,13 @@ if (NOT MSVC)
+         arm/fastinterp/fastinterp_flags.h
+         arm/fastinterp/fastinterp_types.h
+     )
++    # GAEMBOY wasm: FastInterp needs the cycle table even when Dynarmic is not built
++    if (NOT ("x86_64" IN_LIST ARCHITECTURE OR "arm64" IN_LIST ARCHITECTURE))
++        target_sources(citra_core PRIVATE
++            arm/dynarmic/arm_tick_counts.cpp
++            arm/dynarmic/arm_tick_counts.h
++        )
++    endif()
+ endif()
+ 
+ if (CITRA_USE_PRECOMPILED_HEADERS)
+diff --git a/src/video_core/renderer_software/renderer_software.cpp b/src/video_core/renderer_software/renderer_software.cpp
+index 14aabca..d8d02b5 100644
+--- a/src/video_core/renderer_software/renderer_software.cpp
++++ b/src/video_core/renderer_software/renderer_software.cpp
+@@ -45,7 +45,16 @@ void RendererSoftware::LoadFBToScreenInfo(int i, const Pica::ColorFill& color_fi
+     const u8* framebuffer_data = memory.GetPhysicalPointer(framebuffer_addr);
+ 
+     const s32 pixel_stride = framebuffer.stride / bpp;
+-    info.height = framebuffer.height;
++    // 800px "wide" mode on the top screen (libctru gfxSetWide): neither the 2D (bit 6) nor the
++    // stereoscopic (bit 5) flag is set and the framebuffer holds twice as many lines. Bits 8-9
++    // are only set by a real buffer swap, which keeps the reset-time register value out of it.
++    u32 lines = framebuffer.height;
++    const bool wide =
++        fb_id == 0 && (framebuffer.format & 0x60) == 0 && (framebuffer.format & 0x300) != 0;
++    if (wide && memory.IsValidPhysicalAddress(framebuffer_addr + framebuffer.stride * lines * 2 - 1)) {
++        lines *= 2;
++    }
++    info.height = lines;
+     info.width = pixel_stride;
+     info.pixels.resize(info.width * info.height * 4);
+ 
+diff --git a/src/video_core/renderer_software/sw_rasterizer.cpp b/src/video_core/renderer_software/sw_rasterizer.cpp
+index 1e82f87..8d244c2 100644
+--- a/src/video_core/renderer_software/sw_rasterizer.cpp
++++ b/src/video_core/renderer_software/sw_rasterizer.cpp
+@@ -303,8 +303,7 @@ void RasterizerSoftware::ProcessTriangle(const Vertex& v0, const Vertex& v1, con
+ 
+     // Enter rasterization loop, starting at the center of the topleft bounding box corner.
+     // TODO: Not sure if looping through x first might be faster
+-    for (u16 y = min_y + 8; y < max_y; y += 0x10) {
+-        const auto process_scanline = [&, y] {
++    const auto process_scanline = [&](u16 y) {
+             for (u16 x = min_x + 8; x < max_x; x += 0x10) {
+                 // Do not process the pixel if it's inside the scissor box and the scissor mode is
+                 // set to Exclude.
+@@ -467,8 +466,31 @@ void RasterizerSoftware::ProcessTriangle(const Vertex& v0, const Vertex& v1, con
+                 }
+             }
+         };
+-        sw_workers.QueueWork(std::move(process_scanline));
++#ifdef __EMSCRIPTEN__
++    // WebAssembly: futex-based sync makes one job per scanline cost more than the scanline
++    // itself. Rasterize small triangles inline, split big ones into one interleaved band per
++    // worker (bands jobs + one wait per triangle instead of one job per scanline).
++    const u32 first_y = min_y + 8;
++    const u32 rows = max_y > first_y ? (max_y - first_y + 0xF) / 0x10 : 0;
++    const u32 bands = static_cast<u32>(std::min<std::size_t>(num_sw_threads, rows / 8));
++    if (bands <= 1) {
++        for (u32 y = first_y; y < max_y; y += 0x10) {
++            process_scanline(static_cast<u16>(y));
++        }
++        return;
++    }
++    for (u32 band = 0; band < bands; band++) {
++        sw_workers.QueueWork([&, band, bands, first_y] {
++            for (u32 y = first_y + band * 0x10; y < max_y; y += 0x10 * bands) {
++                process_scanline(static_cast<u16>(y));
++            }
++        });
++    }
++#else
++    for (u16 y = min_y + 8; y < max_y; y += 0x10) {
++        sw_workers.QueueWork([&, y] { process_scanline(y); });
+     }
++#endif
+     sw_workers.WaitForRequests();
+ }
+ 

@@ -1,0 +1,14 @@
+diff --git a/crypto/compat/arc4random.h b/crypto/compat/arc4random.h
+index ffa3239..0b610fd 100644
+--- a/crypto/compat/arc4random.h
++++ b/crypto/compat/arc4random.h
+@@ -18,6 +18,9 @@
+ #elif defined(__midipix__)
+ #include "arc4random_linux.h"
+ 
++#elif defined(__EMSCRIPTEN__)
++#include "arc4random_linux.h"
++
+ #elif defined(__NetBSD__)
+ #include "arc4random_netbsd.h"
+ 

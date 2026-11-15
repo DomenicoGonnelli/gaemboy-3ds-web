@@ -2,3 +2,7 @@ third_party/
 cpu-bench/build/
 .DS_Store
 tools/
+test-homebrew/
+build-azahar-wasm/
+build-azahar-wasm.*.log
+azahar-web/dist/
