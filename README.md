@@ -67,7 +67,14 @@ Node 22 (V8 meno recente) dà 107% sul mix, vedi `wasm-node.json`.
    100%, la fascia media molto sotto. Per il 3DS su mobile web serve probabilmente un **JIT ARM→WASM**
    (blocchi ARM tradotti in moduli WebAssembly a runtime, come fanno v86 o Play! per PS2). È un lavoro di R&D di
    mesi, non un passo del POC. **Misuralo direttamente**: vedi "Prova sul telefono".
-4. **Memoria**: FastInterp usa ~11 MB di block cache (16384 blocchi × 664 B) più 4 MB di page table vuota.
+4. **Safari/WebKit disattiva il JIT nei contesti non sicuri.** Su `http://<IP-LAN>`, che non è HTTPS né localhost,
+   WebKit esegue JavaScript e WASM senza JIT: in un ciclo JS fa 36 M it/s contro ~950 su localhost o HTTPS, e FastInterp
+   scende da ~290 a 9 MIPS. Chromium non lo fa. Lo stesso effetto si ha con la Modalità di isolamento di iOS.
+   Conseguenze: la versione web va servita **solo in HTTPS** (GAEMBOY lo è già) e i test su iPhone vanno fatti in HTTPS.
+   La pagina del benchmark ora rileva il JIT spento e segnala il risultato come non valido.
+   Il primo test su iPhone (iOS, Safari 27 via `http://192.168.1.19`) aveva dato 3% RT / 6 MIPS proprio per
+   questo, ed è stato riprodotto sul Mac.
+5. **Memoria**: FastInterp usa ~11 MB di block cache (16384 blocchi × 664 B) più 4 MB di page table vuota.
    DynCom invece riserva staticamente 125 MiB di cache di traduzione: un'altra ragione per escluderlo in WASM.
 
 ## Correzioni allo studio di fattibilità
@@ -102,12 +109,19 @@ Da valutare solo se B dà buoni risultati.
 
 ## Prova sul telefono
 
-La cartella `cpu-bench/build/web/` è statica e autosufficiente: non servono SharedArrayBuffer né HTTPS.
+La cartella `cpu-bench/build/web/` è statica e autosufficiente e non richiede SharedArrayBuffer. Per Safari su
+iPhone/iPad **serve però HTTPS**, altrimenti il JIT resta spento (vedi sopra). Su Android con Chrome basta anche
+`http://<IP-del-Mac>:8765/`.
 
 ```sh
-cd cpu-bench/build/web && python3 -m http.server 8765 --bind 0.0.0.0
-# dal telefono (stessa Wi-Fi): http://<IP-del-Mac>:8765/  -> "Avvia benchmark" -> "Copia risultati"
+cd cpu-bench/build/web && python3 -m http.server 8765 --bind 0.0.0.0 &
+# HTTPS con certificato valido, senza account: tunnel temporaneo Cloudflare
+mkdir -p ../../../tools && curl -fsSL https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz | tar xz -C ../../../tools
+../../../tools/cloudflared tunnel --no-autoupdate --url http://127.0.0.1:8765   # stampa https://<nome>.trycloudflare.com
+# dal telefono: apri l'URL https -> "Avvia benchmark" -> "Copia risultati"
 ```
+
+Se la copia automatica non è disponibile, i risultati compaiono comunque in un riquadro selezionabile.
 
 Il verdetto in fondo alla pagina si basa sul mix FastInterp: ≥150% buono, 100–150% al limite, <100% insufficiente.
 

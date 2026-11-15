@@ -19,7 +19,10 @@
   td.ok { color: #81c995; } td.fail { color: #f28b82; }
   .rt-good { color: #81c995; font-weight: 600; } .rt-mid { color: #fdd663; } .rt-bad { color: #f28b82; }
   #verdict { margin-top: 14px; padding: 12px; border-radius: 8px; background: #1c2128; line-height: 1.45; }
-  #status, #device { color: #9aa0a6; font-size: .8rem; margin-top: 8px; }
+  #status, #device, #jit { color: #9aa0a6; font-size: .8rem; margin-top: 8px; }
+  #jit.off { color: #f28b82; font-weight: 600; }
+  #out { width: 100%; height: 140px; margin-top: 10px; background: #1c2128; color: #e8eaed;
+         border: 1px solid #2a2f36; border-radius: 8px; font: .7rem ui-monospace, monospace; }
 </style>
 </head>
 <body>
@@ -39,13 +42,39 @@
 </div>
 <div id="verdict" hidden></div>
 <div id="status">Pronto.</div>
+<div id="jit"></div>
 <div id="device"></div>
+<textarea id="out" readonly hidden></textarea>
 <script type="module">
 const ARM11_HZ = 268111856;
 const $ = (id) => document.getElementById(id);
 const results = [];
 window.__benchResults = results;
 $('device').textContent = `${navigator.userAgent} — core logici: ${navigator.hardwareConcurrency ?? '?'}`;
+
+// Without a JIT (e.g. iOS Lockdown Mode) WebAssembly is interpreted ~30-50x slower, so the
+// numbers would not reflect the device: detect it with a tight JS loop (JIT: ~1e9 it/s on M2,
+// interpreter: ~4e7 it/s; 120M it/s leaves room for slow phones that do have a JIT).
+let jit = null;
+function probeJit() {
+  let x = 1;
+  let n = 0;
+  const t0 = performance.now();
+  while (performance.now() - t0 < 200) {
+    for (let i = 0; i < 50000; i++) x = (Math.imul(x, 1664525) + 1013904223) | 0;
+    n += 50000;
+  }
+  const mops = n / ((performance.now() - t0) / 1000) / 1e6;
+  jit = { mops: Math.round(mops), enabled: mops >= 120, sink: x & 1 };
+  $('jit').className = jit.enabled ? '' : 'off';
+  $('jit').textContent = jit.enabled
+    ? `JIT JavaScript/WASM: attivo (${jit.mops} M it/s).`
+    : `JIT disattivato (${jit.mops} M it/s): WebAssembly viene interpretato e i risultati NON sono rappresentativi. `
+      + (window.isSecureContext
+        ? 'Su iPhone/iPad di solito è la Modalità di isolamento: in Safari tocca aA → Impostazioni sito web → '
+          + 'disattiva "Modalità di isolamento" per questo sito, poi ricarica.'
+        : 'Safari disattiva il JIT sulle pagine http:// non sicure (localhost escluso): apri questa pagina in https://.');
+}
 
 const rtClass = (pct) => (pct >= 100 ? 'rt-good' : pct >= 60 ? 'rt-mid' : 'rt-bad');
 
@@ -74,7 +103,8 @@ function showVerdict() {
   if (!mix) return;
   const pct = mix.fastinterp.rt;
   let text;
-  if (pct >= 150) text = 'Margine buono: la CPU emulata lascia spazio a GPU, audio e servizi HLE.';
+  if (jit && !jit.enabled) text = 'Risultato NON valido: il browser ha eseguito WebAssembly senza JIT (causa e rimedio qui sotto).';
+  else if (pct >= 150) text = 'Margine buono: la CPU emulata lascia spazio a GPU, audio e servizi HLE.';
   else if (pct >= 100) text = 'Al limite: la sola CPU tiene il tempo reale, ma il resto dell\'emulatore (GPU, audio, HLE) va ancora pagato. Giochi leggeri plausibili, quelli pesanti no senza un JIT WASM.';
   else if (pct >= 60) text = 'Insufficiente per giochi pesanti (Pokémon 3D): servono un JIT WASM o un dispositivo più veloce.';
   else text = 'Troppo lento su questo dispositivo per l\'emulazione 3DS nel browser.';
@@ -88,6 +118,8 @@ $('run').onclick = () => {
   $('rows').innerHTML = '';
   $('verdict').hidden = true;
   results.length = 0;
+  $('out').hidden = true;
+  probeJit();
   document.body.dataset.state = 'running';
   const t0 = performance.now();
   const worker = new Worker('./bench-worker.js', { type: 'module' });
@@ -107,6 +139,8 @@ $('run').onclick = () => {
     if (data.type === 'done') {
       $('status').textContent = `Completato in ${((performance.now() - t0) / 1000).toFixed(1)} s.`;
       showVerdict();
+      $('out').value = payload();
+      $('out').hidden = false;
       document.body.dataset.state = 'done';
       $('run').disabled = false;
       $('copy').disabled = false;
@@ -116,10 +150,32 @@ $('run').onclick = () => {
   worker.postMessage({ type: 'start', only: only === null ? null : Number(only) });
 };
 
-$('copy').onclick = async () => {
-  const payload = JSON.stringify({ userAgent: navigator.userAgent, cores: navigator.hardwareConcurrency, results }, null, 1);
-  try { await navigator.clipboard.writeText(payload); $('status').textContent = 'Risultati copiati negli appunti.'; }
-  catch { $('status').textContent = payload; }
+const payload = () => JSON.stringify({ userAgent: navigator.userAgent, cores: navigator.hardwareConcurrency, jit, results });
+
+// navigator.clipboard only exists on HTTPS/localhost; over plain http on the LAN fall back to
+// execCommand('copy') on a selected textarea, which must run synchronously inside the click.
+function copyFallback(text) {
+  const out = $('out');
+  out.hidden = false;
+  out.value = text;
+  out.focus();
+  out.select();
+  out.setSelectionRange(0, text.length);
+  try { return document.execCommand('copy'); } catch { return false; }
+}
+
+$('copy').onclick = () => {
+  const text = payload();
+  const done = (ok) => {
+    $('status').textContent = ok
+      ? 'Risultati copiati negli appunti.'
+      : 'Copia automatica non disponibile: tieni premuto nel riquadro qui sotto → Seleziona tutto → Copia.';
+  };
+  if (window.isSecureContext && navigator.clipboard) {
+    navigator.clipboard.writeText(text).then(() => done(true), () => done(copyFallback(text)));
+  } else {
+    done(copyFallback(text));
+  }
 };
 
 if (new URLSearchParams(location.search).has('autorun')) $('run').click();
