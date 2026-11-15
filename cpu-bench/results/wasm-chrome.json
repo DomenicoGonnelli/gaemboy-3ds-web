@@ -1,0 +1,140 @@
+{
+ "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/157.0.0.0 Safari/537.36",
+ "results": [
+  {
+   "id": 0,
+   "name": "entities (game logic)",
+   "instructions": 43193134,
+   "dyncom": {
+    "mips": 127.75254066844128,
+    "rt": 56.638043515574616,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 248.2364022988506,
+    "rt": 110.05357765871138,
+    "ok": true
+   }
+  },
+  {
+   "id": 1,
+   "name": "crc32 (table lookups)",
+   "instructions": 65614541,
+   "dyncom": {
+    "mips": 180.50767812929848,
+    "rt": 75.74691182966129,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 277.79229889923795,
+    "rt": 116.57071316715444,
+    "ok": true
+   }
+  },
+  {
+   "id": 2,
+   "name": "shellsort",
+   "instructions": 50065102,
+   "dyncom": {
+    "mips": 141.86767356191555,
+    "rt": 97.68471677327456,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 266.44546035125063,
+    "rt": 183.4642711510835,
+    "ok": true
+   }
+  },
+  {
+   "id": 3,
+   "name": "vertex xform (VFP)",
+   "instructions": 64474570,
+   "dyncom": {
+    "mips": 56.8659110954313,
+    "rt": 40.46050957876743,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 413.03376040999365,
+    "rt": 293.87652633188026,
+    "ok": true
+   }
+  },
+  {
+   "id": 4,
+   "name": "bytecode VM (script)",
+   "instructions": 57285738,
+   "dyncom": {
+    "mips": 114.89317689530685,
+    "rt": 75.23301699381894,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 236.32730198019803,
+    "rt": 154.74910178679093,
+    "ok": true
+   }
+  },
+  {
+   "id": 5,
+   "name": "block copy (ldm/stm)",
+   "instructions": 43212888,
+   "dyncom": {
+    "mips": 173.61546002410606,
+    "rt": 71.03597755952852,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 373.49082108902337,
+    "rt": 152.81637696254668,
+    "ok": true
+   }
+  },
+  {
+   "id": 6,
+   "name": "crc32 [thumb]",
+   "instructions": 49230143,
+   "dyncom": {
+    "mips": 201.26795993458705,
+    "rt": 75.09211325013638,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 314.1681110402042,
+    "rt": 117.21461966166788,
+    "ok": true
+   }
+  },
+  {
+   "id": 7,
+   "name": "bytecode VM [thumb]",
+   "instructions": 88766544,
+   "dyncom": {
+    "mips": 146.21404052050733,
+    "rt": 54.54416842697903,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 265.52959617110383,
+    "rt": 99.05403724803759,
+    "ok": true
+   }
+  },
+  {
+   "id": 8,
+   "name": "mix (all of the above)",
+   "instructions": 220402294,
+   "dyncom": {
+    "mips": 140.08917180448736,
+    "rt": 66.30835688428405,
+    "ok": true
+   },
+   "fastinterp": {
+    "mips": 274.2345327858654,
+    "rt": 129.8033319472989,
+    "ok": true
+   }
+  }
+ ]
+}

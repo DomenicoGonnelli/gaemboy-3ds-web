@@ -1,0 +1,128 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GAEMBOY 3DS LAB — CPU benchmark</title>
+<style>
+  :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
+  body { margin: 0; padding: 16px; background: #111418; color: #e8eaed; }
+  h1 { font-size: 1.2rem; margin: 0 0 4px; }
+  p.sub { margin: 0 0 12px; color: #9aa0a6; font-size: .85rem; }
+  button { background: #e60012; color: #fff; border: 0; border-radius: 8px; padding: 10px 18px;
+           font-size: 1rem; cursor: pointer; margin-right: 8px; }
+  button:disabled { opacity: .5; cursor: default; }
+  .wrap { overflow-x: auto; margin-top: 12px; }
+  table { border-collapse: collapse; font-size: .8rem; min-width: 640px; }
+  th, td { padding: 5px 8px; border-bottom: 1px solid #2a2f36; text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  td.ok { color: #81c995; } td.fail { color: #f28b82; }
+  .rt-good { color: #81c995; font-weight: 600; } .rt-mid { color: #fdd663; } .rt-bad { color: #f28b82; }
+  #verdict { margin-top: 14px; padding: 12px; border-radius: 8px; background: #1c2128; line-height: 1.45; }
+  #status, #device { color: #9aa0a6; font-size: .8rem; margin-top: 8px; }
+</style>
+</head>
+<body>
+<h1>GAEMBOY 3DS LAB — CPU ARM11 in WebAssembly</h1>
+<p class="sub">Interpreti reali di Azahar (DynCom e FastInterp) compilati in WASM, che eseguono codice ARMv6K/VFP.
+  100% = la CPU emulata tiene il passo di un ARM11 3DS a 268&nbsp;MHz completamente carico.</p>
+<button id="run">Avvia benchmark</button>
+<button id="copy" disabled>Copia risultati</button>
+<div class="wrap">
+<table>
+  <thead><tr>
+    <th>Workload</th><th>FastInterp %RT</th><th>FastInterp MIPS</th>
+    <th>DynCom %RT</th><th>DynCom MIPS</th><th>M istr.</th><th>Checksum</th>
+  </tr></thead>
+  <tbody id="rows"></tbody>
+</table>
+</div>
+<div id="verdict" hidden></div>
+<div id="status">Pronto.</div>
+<div id="device"></div>
+<script type="module">
+const ARM11_HZ = 268111856;
+const $ = (id) => document.getElementById(id);
+const results = [];
+window.__benchResults = results;
+$('device').textContent = `${navigator.userAgent} — core logici: ${navigator.hardwareConcurrency ?? '?'}`;
+
+const rtClass = (pct) => (pct >= 100 ? 'rt-good' : pct >= 60 ? 'rt-mid' : 'rt-bad');
+
+function addRow({ workload, dyn, fi, expected }) {
+  const instr = dyn.ticks;
+  const guestSeconds = fi.ticks / ARM11_HZ;
+  const row = {
+    id: workload.id, name: workload.name, instructions: instr,
+    dyncom: { mips: instr / dyn.seconds / 1e6, rt: (100 * guestSeconds) / dyn.seconds,
+              ok: dyn.exited && dyn.checksum === expected && dyn.unmapped === 0 },
+    fastinterp: { mips: instr / fi.seconds / 1e6, rt: (100 * guestSeconds) / fi.seconds,
+                  ok: fi.exited && fi.checksum === expected && fi.unmapped === 0 },
+  };
+  results.push(row);
+  const ok = row.dyncom.ok && row.fastinterp.ok;
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td>${row.name}</td>
+    <td class="${rtClass(row.fastinterp.rt)}">${row.fastinterp.rt.toFixed(0)}%</td><td>${row.fastinterp.mips.toFixed(0)}</td>
+    <td class="${rtClass(row.dyncom.rt)}">${row.dyncom.rt.toFixed(0)}%</td><td>${row.dyncom.mips.toFixed(0)}</td>
+    <td>${(instr / 1e6).toFixed(1)}</td><td class="${ok ? 'ok' : 'fail'}">${ok ? 'OK' : 'ERRATO'}</td>`;
+  $('rows').appendChild(tr);
+}
+
+function showVerdict() {
+  const mix = results.find((r) => r.id === 8);
+  if (!mix) return;
+  const pct = mix.fastinterp.rt;
+  let text;
+  if (pct >= 150) text = 'Margine buono: la CPU emulata lascia spazio a GPU, audio e servizi HLE.';
+  else if (pct >= 100) text = 'Al limite: la sola CPU tiene il tempo reale, ma il resto dell\'emulatore (GPU, audio, HLE) va ancora pagato. Giochi leggeri plausibili, quelli pesanti no senza un JIT WASM.';
+  else if (pct >= 60) text = 'Insufficiente per giochi pesanti (Pokémon 3D): servono un JIT WASM o un dispositivo più veloce.';
+  else text = 'Troppo lento su questo dispositivo per l\'emulazione 3DS nel browser.';
+  $('verdict').hidden = false;
+  $('verdict').innerHTML = `<b>Mix: FastInterp ${pct.toFixed(0)}% del tempo reale 3DS</b> (${mix.fastinterp.mips.toFixed(0)} MIPS).<br>${text}`;
+}
+
+$('run').onclick = () => {
+  $('run').disabled = true;
+  $('copy').disabled = true;
+  $('rows').innerHTML = '';
+  $('verdict').hidden = true;
+  results.length = 0;
+  document.body.dataset.state = 'running';
+  const t0 = performance.now();
+  const worker = new Worker('./bench-worker.js', { type: 'module' });
+  const only = new URLSearchParams(location.search).get('only');
+  worker.onmessage = ({ data }) => {
+    if (data.type === 'workloads') $('status').textContent = 'Esecuzione…';
+    if (data.type === 'result') {
+      addRow(data);
+      $('status').textContent = `Esecuzione… (${results.length} completati)`;
+    }
+    if (data.type === 'error') {
+      $('status').textContent = `Errore: ${data.message}`;
+      document.body.dataset.state = 'error';
+      $('run').disabled = false;
+      worker.terminate();
+    }
+    if (data.type === 'done') {
+      $('status').textContent = `Completato in ${((performance.now() - t0) / 1000).toFixed(1)} s.`;
+      showVerdict();
+      document.body.dataset.state = 'done';
+      $('run').disabled = false;
+      $('copy').disabled = false;
+      worker.terminate();
+    }
+  };
+  worker.postMessage({ type: 'start', only: only === null ? null : Number(only) });
+};
+
+$('copy').onclick = async () => {
+  const payload = JSON.stringify({ userAgent: navigator.userAgent, cores: navigator.hardwareConcurrency, results }, null, 1);
+  try { await navigator.clipboard.writeText(payload); $('status').textContent = 'Risultati copiati negli appunti.'; }
+  catch { $('status').textContent = payload; }
+};
+
+if (new URLSearchParams(location.search).has('autorun')) $('run').click();
+</script>
+</body>
+</html>
