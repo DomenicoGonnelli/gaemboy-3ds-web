@@ -281,7 +281,7 @@ La pagina è pronta per i dump **della tua cartuccia**. Il repo non contiene gio
 | Cosa | Stato |
 |---|---|
 | Formati | `.3ds`/`.cci`/`.cxi`/`.app` **decrittati** (es. GodMode9 → *Decrypt*), `.zcci`/`.zcxi`, homebrew `.3dsx`/`.elf`. I `.cia` vanno installati e non si caricano direttamente. |
-| File grandi | WORKERFS: nessuna copia in memoria, letture a blocchi. Verificato con un file da 3,5 GB. |
+| File grandi | WORKERFS: nessuna copia in memoria, letture a blocchi. Verificato con un file da 3,5 GB. Self-test I/O (`?args=--io-selftest` + file con marcatori `@<offset hex>`): letture corrette **14/14** fino a 3,4 GB, sia con seek+fread sia con `pread` (`FileUtil::IOFile` di Azahar), in Chrome e WebKit. |
 | ROM criptata o file non valido | Errore chiaro con il motivo del core e una spiegazione in italiano. Verificato con un'intestazione NCCH criptata sintetica. |
 | Tastiera | D-pad, A/B/X/Y, L/R, **ZL/ZR**, Start/Select, **Circle Pad** (I/J/K/L), **C-Stick** (T/F/G/H). |
 | Gamepad | Gamepad API, tasti per posizione come sul 3DS, stick → Circle Pad/C-Stick, grilletti → ZL/ZR. Verificato con un pad simulato. |

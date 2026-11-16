@@ -133,7 +133,9 @@ function boot(file) {
         break;
     }
   };
-  worker.postMessage({ type: 'boot', file });
+  // ?args=a,b passes extra argv to the frontend (e.g. --io-selftest for large-file diagnostics).
+  const extraArgs = (new URLSearchParams(location.search).get('args') || '').split(',').filter(Boolean);
+  worker.postMessage({ type: 'boot', file, extraArgs });
 }
 
 // ---------------------------------------------------------------- video + input loop

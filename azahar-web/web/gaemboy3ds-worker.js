@@ -40,7 +40,7 @@ self.onmessage = async ({ data }) => {
   const romName = file.name.replace(/[^\w.\- ]/g, '_');
   try {
     mod = await createGaemboy3DS({
-      arguments: [`/rom/${romName}`],
+      arguments: [`/rom/${romName}`, ...(data.extraArgs || [])],
       print: (line) => post('log', { line }),
       printErr: (line) => post('log', { line }),
       preRun: [(m) => {

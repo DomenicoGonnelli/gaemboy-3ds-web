@@ -18,6 +18,7 @@
 #include <sys/stat.h>
 #include <emscripten/emscripten.h>
 
+#include "common/file_util.h"
 #include "libretro.h"
 
 namespace {
@@ -214,6 +215,47 @@ void DefaultOptions() {
     g_vars["citra_analog_function"] = "c_stick"; // right stick = C-stick only (touch = pointer)
 }
 
+// Diagnostic for large game files: reads 16-byte ASCII markers ("@" + offset in hex) written at
+// known offsets of a synthetic file through Azahar's own FileUtil::IOFile, with both the
+// seek+fread path and the pread path (ReadAtBytes), from the emulation thread.
+int RunIoSelfTest(const char* path) {
+    FileUtil::IOFile file(path, "rb");
+    if (!file.IsOpen()) {
+        SetMessage("io-selftest: impossibile aprire il file");
+        return 1;
+    }
+    const uint64_t size = file.GetSize();
+    const uint64_t offsets[] = {0x1000ull,     1500000000ull, 0x7FFFF000ull, 0x80000000ull,
+                                0x80001000ull, 3000000000ull, 3400000000ull};
+    int checked = 0, ok = 0;
+    char line[256];
+    for (const uint64_t off : offsets) {
+        if (off + 16 > size) {
+            continue;
+        }
+        char expected[17];
+        std::snprintf(expected, sizeof(expected), "@%015llx", static_cast<unsigned long long>(off));
+        char seek_buf[17]{};
+        char pread_buf[17]{};
+        file.Seek(static_cast<s64>(off), SEEK_SET);
+        file.ReadBytes(seek_buf, 16);
+        file.ReadAtBytes(pread_buf, 16, static_cast<std::size_t>(off));
+        const bool seek_ok = std::memcmp(seek_buf, expected, 16) == 0;
+        const bool pread_ok = std::memcmp(pread_buf, expected, 16) == 0;
+        checked += 2;
+        ok += seek_ok + pread_ok;
+        std::snprintf(line, sizeof(line), "io-selftest off=0x%09llx seek=%s pread=%s",
+                      static_cast<unsigned long long>(off), seek_ok ? "OK" : "FAIL",
+                      pread_ok ? "OK" : "FAIL");
+        std::printf("%s\n", line);
+    }
+    std::snprintf(line, sizeof(line), "io-selftest: size=%llu, letture corrette %d/%d",
+                  static_cast<unsigned long long>(size), ok, checked);
+    SetMessage(line);
+    g_state.status = ok == checked ? 2 : 3;
+    return ok == checked ? 0 : 1;
+}
+
 } // namespace
 
 extern "C" {
@@ -239,6 +281,9 @@ int main(int argc, char** argv) {
         mkdir(dir, 0755);
     }
     DefaultOptions();
+    if (argc > 2 && std::strcmp(argv[2], "--io-selftest") == 0) {
+        return RunIoSelfTest(rom);
+    }
 
     retro_set_environment(EnvironmentCb);
     retro_set_video_refresh(VideoRefreshCb);
