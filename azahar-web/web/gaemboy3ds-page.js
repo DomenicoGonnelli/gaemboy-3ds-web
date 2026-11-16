@@ -112,7 +112,7 @@ function initAudio() {
 function boot(file) {
   if (worker) return;
   for (const id of ['demo', 'demo3d']) $(id).disabled = true;
-  $('pick').classList.add('disabled');
+  $('pick').disabled = true;
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
@@ -151,10 +151,18 @@ function boot(file) {
   // ?args=a,b passes extra argv to the frontend (e.g. --io-selftest for large-file diagnostics).
   const extraArgs = (new URLSearchParams(location.search).get('args') || '').split(',').filter(Boolean);
   if (useSw) extraArgs.push('--sw');
+  let offscreen = null;
   if (!useSw && canvas.transferControlToOffscreen) {
-    const offscreen = canvas.transferControlToOffscreen();
+    try {
+      offscreen = canvas.transferControlToOffscreen();
+    } catch (err) {
+      log(`[video] OffscreenCanvas non disponibile, uso software: ${err.message}`);
+    }
+  }
+  if (offscreen) {
     worker.postMessage({ type: 'boot', file, extraArgs, canvas: offscreen }, [offscreen]);
   } else {
+    if (!extraArgs.includes('--sw')) extraArgs.push('--sw');
     worker.postMessage({ type: 'boot', file, extraArgs });
   }
 }
@@ -276,12 +284,21 @@ async function startDemo(name) {
 }
 $('demo').onclick = () => startDemo($('demo').dataset.file);
 $('demo3d').onclick = () => startDemo($('demo3d').dataset.file);
+$('pick').onclick = () => $('file').click();
 $('file').onchange = (e) => {
   const file = e.target.files[0];
   if (!file) return;
   ensureAudio();
   boot(file);
 };
+addEventListener('dragover', (e) => e.preventDefault());
+addEventListener('drop', (e) => {
+  e.preventDefault();
+  const file = e.dataTransfer?.files?.[0];
+  if (!file || worker) return;
+  ensureAudio();
+  boot(file);
+});
 $('throttle').onclick = () => {
   const next = readI('throttle') ? 0 : 1;
   writeI('throttle', next);
