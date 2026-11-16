@@ -242,12 +242,8 @@ clock_t_gb::time_point g_next_deadline;
 clock_t_gb::time_point g_fps_window_start;
 int g_fps_window_frames = 0;
 
-void StepFrame() {
-    const auto now = clock_t_gb::now();
-    if (g_state.throttle && now + std::chrono::milliseconds(2) < g_next_deadline) {
-        return; // e.g. 120 Hz display: skip every other rAF to pace ~60 fps
-    }
-    const auto t0 = now;
+void StepFrame(void*) {
+    const auto t0 = clock_t_gb::now();
     retro_run();
     const auto t1 = clock_t_gb::now();
     const float ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
@@ -262,14 +258,21 @@ void StepFrame() {
         g_fps_window_frames = 0;
         g_fps_window_start = t1;
     }
+    int delay_ms = 1; // always yield >=1ms so the worker event loop & GPU process stay responsive
     if (g_state.throttle) {
         g_next_deadline += kFrameDur;
-        if (g_next_deadline < t1) {
+        if (g_next_deadline <= t1) {
             g_next_deadline = t1;
+        } else {
+            delay_ms = std::max(
+                1, static_cast<int>(
+                       std::chrono::duration_cast<std::chrono::milliseconds>(g_next_deadline - t1)
+                           .count()));
         }
     } else {
         g_next_deadline = t1;
     }
+    emscripten_async_call(StepFrame, nullptr, delay_ms);
 }
 
 // Diagnostic for large game files: reads 16-byte ASCII markers ("@" + offset in hex) written at
@@ -398,6 +401,6 @@ int main(int argc, char** argv) {
 
     g_next_deadline = clock_t_gb::now();
     g_fps_window_start = g_next_deadline;
-    emscripten_set_main_loop(StepFrame, 0, false);
+    emscripten_async_call(StepFrame, nullptr, 0);
     return 0;
 }
