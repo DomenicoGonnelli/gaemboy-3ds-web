@@ -28,7 +28,11 @@ const PAD_DEADZONE = 0.15;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
-const useSw = new URLSearchParams(location.search).has('sw');
+const urlParams = new URLSearchParams(location.search);
+const isSafari = /^((?!chrome|crios|android).)*safari/i.test(navigator.userAgent);
+// WebKit/Safari throttles OffscreenCanvas WebGL2 in a worker (~1-8 fps); default to software on
+// Safari (override with ?gl) and WebGL2 on Chromium/Chrome (override with ?sw).
+const useSw = urlParams.has('sw') || (isSafari && !urlParams.has('gl'));
 const ctx = useSw ? canvas.getContext('2d') : null;
 const logEl = $('log');
 const bench = { startedAt: 0, frames: [] };
@@ -67,6 +71,9 @@ function notice(text, kind = 'info') {
   $('notice').textContent = text;
 }
 
+if (isSafari && useSw) {
+  notice('Safari rilevato: renderer software attivo (WebGL2 su OffscreenCanvas in worker è limitato su Safari). Per il 3D a 60 fps in WebGL2 apri http://localhost:8766/ in Chrome (oppure ?gl per forzare WebGL2).', 'info');
+}
 if (!crossOriginIsolated) {
   notice('La pagina non è cross-origin isolated (servono header COOP/COEP): i thread WASM non possono partire.', 'bad');
 }

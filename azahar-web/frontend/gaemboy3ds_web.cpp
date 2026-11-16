@@ -242,6 +242,21 @@ clock_t_gb::time_point g_next_deadline;
 clock_t_gb::time_point g_fps_window_start;
 int g_fps_window_frames = 0;
 
+void StepFrame(void*);
+// Schedule the next frame via MessageChannel so the worker yields to the event loop (allowing
+// OffscreenCanvas to composite and messages to arrive) without browser setTimeout throttling.
+EM_JS(void, gb3ds_schedule_next, (), {
+    if (!self.__gb3ds_mc) {
+        self.__gb3ds_mc = new MessageChannel();
+        self.__gb3ds_mc.port1.onmessage = () => _gb3ds_tick();
+    }
+    self.__gb3ds_mc.port2.postMessage(0);
+});
+
+extern "C" EMSCRIPTEN_KEEPALIVE void gb3ds_tick() {
+    StepFrame(nullptr);
+}
+
 void StepFrame(void*) {
     const auto t0 = clock_t_gb::now();
     retro_run();
@@ -258,21 +273,17 @@ void StepFrame(void*) {
         g_fps_window_frames = 0;
         g_fps_window_start = t1;
     }
-    int delay_ms = 1; // always yield >=1ms so the worker event loop & GPU process stay responsive
     if (g_state.throttle) {
         g_next_deadline += kFrameDur;
         if (g_next_deadline <= t1) {
             g_next_deadline = t1;
         } else {
-            delay_ms = std::max(
-                1, static_cast<int>(
-                       std::chrono::duration_cast<std::chrono::milliseconds>(g_next_deadline - t1)
-                           .count()));
+            std::this_thread::sleep_until(g_next_deadline);
         }
     } else {
         g_next_deadline = t1;
     }
-    emscripten_async_call(StepFrame, nullptr, delay_ms);
+    gb3ds_schedule_next();
 }
 
 // Diagnostic for large game files: reads 16-byte ASCII markers ("@" + offset in hex) written at
@@ -401,6 +412,6 @@ int main(int argc, char** argv) {
 
     g_next_deadline = clock_t_gb::now();
     g_fps_window_start = g_next_deadline;
-    emscripten_async_call(StepFrame, nullptr, 0);
+    gb3ds_schedule_next();
     return 0;
 }
