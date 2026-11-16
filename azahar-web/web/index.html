@@ -8,33 +8,43 @@
   :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
   body { margin: 0; padding: 16px; background: #111418; color: #e8eaed; }
   h1 { font-size: 1.15rem; margin: 0 0 4px; }
-  p.sub { margin: 0 0 12px; color: #9aa0a6; font-size: .85rem; }
+  p.sub { margin: 0 0 12px; color: #9aa0a6; font-size: .85rem; max-width: 980px; }
   .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
   #screen { background: #000; image-rendering: pixelated; width: 400px; height: 480px;
             border-radius: 6px; touch-action: none; }
   button, label.btn { background: #e60012; color: #fff; border: 0; border-radius: 8px; padding: 9px 16px;
            font-size: .95rem; cursor: pointer; margin: 0 8px 8px 0; display: inline-block; }
-  button:disabled { opacity: .5; cursor: default; }
+  button.alt { background: #2a2f36; }
+  button:disabled, label.btn.disabled { opacity: .5; cursor: default; pointer-events: none; }
   input[type=file] { display: none; }
-  table { border-collapse: collapse; font-size: .85rem; min-width: 280px; }
+  table { border-collapse: collapse; font-size: .85rem; min-width: 300px; }
   td { padding: 4px 8px; border-bottom: 1px solid #2a2f36; }
   td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
   .good { color: #81c995; } .mid { color: #fdd663; } .bad { color: #f28b82; }
+  #notice { margin: 4px 0 10px; padding: 10px 12px; border-radius: 8px; background: #1c2128; max-width: 960px; }
+  #notice.bad { background: #3b1d1d; color: #f8c9c4; }
+  #rom-info { color: #9aa0a6; font-size: .82rem; margin-bottom: 8px; min-height: 1em; }
   #log { margin-top: 12px; max-height: 220px; overflow: auto; background: #1c2128; padding: 8px;
          border-radius: 8px; font: .72rem ui-monospace, monospace; white-space: pre-wrap; }
-  .keys { color: #9aa0a6; font-size: .78rem; margin-top: 8px; line-height: 1.5; }
+  .keys { color: #9aa0a6; font-size: .78rem; margin-top: 8px; line-height: 1.6; max-width: 420px; }
+  kbd { background: #2a2f36; border-radius: 4px; padding: 0 4px; font-size: .75rem; }
 </style>
 </head>
 <body>
 <h1>GAEMBOY 3DS LAB — Azahar (core completo) in WebAssembly</h1>
-<p class="sub">Emulatore 3DS Azahar compilato con Emscripten: CPU FastInterp, renderer software, kernel e servizi HLE, in un thread dedicato.
-  Il software viene eseguito localmente nel browser.</p>
+<p class="sub">Emulatore 3DS Azahar compilato con Emscripten (CPU FastInterp, renderer software, kernel e servizi HLE) in un Web Worker.
+  Il gioco viene letto <b>localmente</b> a blocchi, senza caricarlo in memoria per intero e senza upload. Formati: <code>.3ds</code>/<code>.cci</code>/<code>.cxi</code>/<code>.app</code>
+  <b>decrittati</b> (dump della tua cartuccia) e homebrew <code>.3dsx</code>/<code>.elf</code>. I salvataggi restano nel browser (IndexedDB).</p>
 <div>
   <button id="demo" data-file="SuperHaxagon.3dsx">Demo 2D: Super Haxagon (GPL)</button>
   <button id="demo3d" data-file="craftus_reloaded.3dsx">Demo 3D: Craftus Reloaded (MIT)</button>
-  <label class="btn" for="file">Carica .3dsx / .3ds / .cxi…</label><input id="file" type="file" accept=".3dsx,.3ds,.cci,.cxi,.app,.elf,.axf">
-  <button id="throttle" disabled>Velocità: 60 fps</button>
+  <label class="btn" id="pick" for="file">Carica gioco…</label><input id="file" type="file" accept=".3ds,.cci,.cxi,.app,.3dsx,.elf,.axf,.zcci,.zcxi,.z3dsx">
+  <button id="throttle" class="alt" disabled>Velocità: 60 fps</button>
+  <button id="audio" class="alt">Audio: on</button>
+  <button id="save" class="alt" disabled>Salva ora</button>
 </div>
+<div id="notice" hidden></div>
+<div id="rom-info"></div>
 <div class="row">
   <canvas id="screen" width="400" height="480"></canvas>
   <div>
@@ -45,11 +55,18 @@
       <tr><td>FPS emulazione</td><td id="s-fps">—</td></tr>
       <tr><td>Velocità (vs 3DS 59,83 fps)</td><td id="s-speed">—</td></tr>
       <tr><td>Tempo per frame (media)</td><td id="s-ms">—</td></tr>
-      <tr><td>Audio prodotto</td><td id="s-audio">—</td></tr>
+      <tr><td>Audio</td><td id="s-audio">—</td></tr>
+      <tr><td>Input</td><td id="s-input">—</td></tr>
+      <tr><td>Salvataggi (IndexedDB)</td><td id="s-saves">—</td></tr>
       <tr><td>Thread / memoria</td><td id="s-mem">—</td></tr>
     </table>
-    <div class="keys">Tastiera: frecce = D-pad · I/J/K/L = Circle Pad · X = A · Z = B · S = X · A = Y · Q/W = L/R · Invio = Start · Backspace = Select<br>
-      Mouse/touch sullo schermo inferiore = touchscreen</div>
+    <div class="keys">
+      <b>Tastiera</b>: <kbd>←↑→↓</kbd> D-pad · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>S</kbd> X · <kbd>A</kbd> Y ·
+      <kbd>Q</kbd>/<kbd>W</kbd> L/R · <kbd>E</kbd>/<kbd>R</kbd> ZL/ZR · <kbd>Invio</kbd> Start · <kbd>⌫</kbd> Select ·
+      <kbd>I J K L</kbd> Circle Pad · <kbd>T F G H</kbd> C-Stick<br>
+      <b>Gamepad</b>: tasti per posizione come sul 3DS (destra = A, basso = B), stick sinistro = Circle Pad, destro = C-Stick, grilletti = ZL/ZR.<br>
+      <b>Touch</b>: mouse o dito sullo schermo inferiore. Per cambiare gioco ricarica la pagina.
+    </div>
   </div>
 </div>
 <div id="log"></div>

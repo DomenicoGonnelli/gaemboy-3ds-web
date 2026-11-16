@@ -177,21 +177,20 @@ PLAYWRIGHT=/path/to/node_modules/playwright node scripts/run-browsers.mjs http:/
 ### Architettura
 
 ```text
-Pagina (thread principale)                  Modulo WASM gaemboy3ds (10 MB)
-  index.html + gaemboy3ds-page.js             pthread "main" (PROXY_TO_PTHREAD)
-  ├─ carica .3dsx → FS virtuale (MEMFS)  ──▶   gaemboy3ds_web.cpp  (frontend libretro minimo)
-  ├─ requestAnimationFrame: legge il frame       └─ retro_run() → Azahar libretro core
-  │   RGBA dalla memoria condivisa                    ├─ FastInterp (ARM11), kernel + servizi HLE
-  ├─ tastiera/touch → struct condiviso               ├─ PICA200: renderer software (pool di thread)
-  └─ statistiche (fps, ms/frame, audio)              └─ audio HLE → callback libretro
-        ▲  SharedArrayBuffer (COOP/COEP)  ▼
+Pagina (main thread)            Worker "host" (gaemboy3ds-worker.js)        pthread main + pool
+ index.html + page.js            createGaemboy3DS()                          gaemboy3ds_web.cpp
+ ├─ file utente (File) ──────▶   /rom      = WORKERFS (letture a blocchi) ◀─ fopen/fread del core
+ ├─ rAF: frame RGBA  ◀───┐       /gaemboy/3ds/saves = IDBFS (sync 10 s)   ◀─ salvataggi, SD, NAND
+ ├─ tastiera/gamepad/touch ─┤                                                 retro_run() → Azahar
+ └─ AudioWorklet ◀── ring s16 ──┘  SharedArrayBuffer (COOP/COEP) = memoria WASM condivisa
 ```
 
-- **Nessun upload**: il file scelto dall'utente viene scritto nel FS virtuale del browser. Su un server non arriva nulla.
-- Il **frontend libretro minimo** (`azahar-web/frontend/gaemboy3ds_web.cpp`, ~250 righe) è l'API che lo studio
-  chiamava *ipotetica* (§15): init, caricamento del software, frame, framebuffer, pulsanti e touch, più le statistiche.
-- L'emulazione gira in un **pthread**: `retro_run()` può bloccarsi senza congelare la pagina. Pagina ed
-  emulatore comunicano solo tramite una struct in memoria condivisa, senza `postMessage` per frame.
+- **Nessun upload e nessuna copia**: il file dell'utente è montato con WORKERFS e il core lo legge a blocchi
+  su richiesta. Un file da 3,5 GB viene aperto in 0,7 s e la memoria del browser non cresce della sua dimensione.
+- Il **frontend libretro minimo** (`azahar-web/frontend/gaemboy3ds_web.cpp`, ~300 righe) è l'API che lo studio
+  chiamava *ipotetica* (§15): init, caricamento, frame, framebuffer, pulsanti, analogici e touch, audio e statistiche.
+- L'emulazione gira in un **pthread** e il modulo in un **worker dedicato**. Pagina, worker e AudioWorklet
+  comunicano tramite la memoria WASM condivisa (struct + ring audio), senza `postMessage` per frame.
 
 ### Patch ad Azahar (`azahar-web/patches/`)
 
@@ -275,15 +274,35 @@ rasterizzazione e shader sulla GPU, ed è l'unica leva che può portare un gioco
 3. **Profilazione WASM in Chrome**: con Liftoff i frame del loop principale non vengono simbolizzati. Per
    profilare servono `--no-liftoff` e `PROFILE=1` (nomi delle funzioni).
 
+### Provare un gioco vero (input, audio, salvataggi)
+
+La pagina è pronta per i dump **della tua cartuccia**. Il repo non contiene giochi commerciali e non ne vengono scaricati.
+
+| Cosa | Stato |
+|---|---|
+| Formati | `.3ds`/`.cci`/`.cxi`/`.app` **decrittati** (es. GodMode9 → *Decrypt*), `.zcci`/`.zcxi`, homebrew `.3dsx`/`.elf`. I `.cia` vanno installati e non si caricano direttamente. |
+| File grandi | WORKERFS: nessuna copia in memoria, letture a blocchi. Verificato con un file da 3,5 GB. |
+| ROM criptata o file non valido | Errore chiaro con il motivo del core e una spiegazione in italiano. Verificato con un'intestazione NCCH criptata sintetica. |
+| Tastiera | D-pad, A/B/X/Y, L/R, **ZL/ZR**, Start/Select, **Circle Pad** (I/J/K/L), **C-Stick** (T/F/G/H). |
+| Gamepad | Gamepad API, tasti per posizione come sul 3DS, stick → Circle Pad/C-Stick, grilletti → ZL/ZR. Verificato con un pad simulato. |
+| Touch | Mouse, penna o dito sullo schermo inferiore. Verificato sui menu di Craftus. |
+| Audio | AudioWorklet con ring condiviso e ricampionamento da 32 728 Hz. Verificato con la musica di Super Haxagon. Sotto il 100% di velocità l'audio gracchia (va in underrun). |
+| Salvataggi | IndexedDB (IDBFS), sync ogni 10 s, con il pulsante "Salva ora" e alla chiusura della pagina. Verificato: il mondo Craftus sopravvive al reload. |
+
+Gli homebrew libctru avviano l'audio solo se esiste `sdmc:/3ds/dspfirm.cdc`. L'audio HLE di Azahar non usa quel
+file, quindi il worker crea un **segnaposto vuoto** (nessun codice Nintendo). Ai giochi commerciali non serve.
+
+Aspettative: con il renderer software un gioco 3D commerciale girerà **lento** (sotto i 16 fps visti in Craftus
+su M2 Pro). Il test serve a verificare boot, menu, input e salvataggi; la velocità arriverà col renderer WebGL2.
+
 ### Limiti e prossimi passi
 
 - **Renderer**: è il punto critico. Il prossimo POC è il **renderer OpenGL di Azahar portato su WebGL2**
   (GLES 3.0: texture buffer → texture 2D, niente geometry shader, vertex shader PICA in GLSL). Con il renderer
   hardware la GPU passa alla scheda video e il thread di emulazione si libera quasi del tutto.
-- **Audio**: il percorso c'è (sink libretro → callback), ma il test richiede un homebrew senza NDSP o un gioco
-  dell'utente. Poi serve un AudioWorklet.
-- **Giochi commerciali**: vanno forniti dall'utente come dump decriptati (`.3ds`/`.cci`/`.cxi`). Il caricatore
-  della pagina li accetta già. Non sono inclusi né usati qui.
+- **Audio**: funziona (AudioWorklet), ma gracchia quando l'emulazione è sotto il 100%. Si risolve con la velocità
+  o con un time-stretch (Azahar ha SoundTouch).
+- **Giochi commerciali**: vanno forniti dall'utente come dump decrittati. Non sono inclusi né usati qui.
 - Nessun materiale Nintendo nel repo: il test usa solo un homebrew GPL.
 
 ### Provarlo
@@ -296,8 +315,10 @@ curl -L -o test-homebrew/craftus_reloaded.3dsx https://github.com/RSDuck/craftus
 python3 azahar-web/scripts/serve.py           # http://localhost:8766/ (header COOP/COEP inclusi)
 ```
 
-Apri `http://localhost:8766/`, poi "Demo 2D" o "Demo 3D", oppure "Carica…" con un tuo `.3dsx`/`.3ds`.
-Tastiera: frecce = D-pad, I/J/K/L = Circle Pad, X = A, Z = B, S = X, A = Y, Q/W = L/R, Invio = Start.
+Apri `http://localhost:8766/`, poi "Demo 2D" o "Demo 3D", oppure "Carica gioco…" con un tuo `.3ds`/`.cci`/`.cxi`
+decrittato o un `.3dsx`. Per cambiare gioco ricarica la pagina.
+Tastiera: frecce = D-pad, I/J/K/L = Circle Pad, T/F/G/H = C-Stick, X = A, Z = B, S = X, A = Y, Q/W = L/R,
+E/R = ZL/ZR, Invio = Start, Backspace = Select. Il gamepad viene rilevato in automatico.
 In Craftus: S avanti, I/J/K/L per guardarsi intorno, W rompe un blocco, Q lo piazza. Per profilare: `PROFILE=1 azahar-web/scripts/build.sh`.
 
 ## Correzioni allo studio di fattibilità

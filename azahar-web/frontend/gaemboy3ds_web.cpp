@@ -1,8 +1,9 @@
 // GAEMBOY 3DS — minimal libretro frontend for Azahar's libretro core, built with Emscripten.
 //
-// Runs as main() inside a pthread (-sPROXY_TO_PTHREAD), so retro_run() may block freely while
-// the page's main thread stays responsive. The page talks to the emulator only through the
-// shared-memory struct returned by gb3ds_state(): it reads frames/stats and writes input.
+// The module lives in a dedicated Web Worker (web/gaemboy3ds-worker.js) and main() runs in a
+// pthread (-sPROXY_TO_PTHREAD), so retro_run() may block freely. Page and AudioWorklet talk to the
+// emulator only through the shared-memory struct returned by gb3ds_state(): frames, stats and the
+// audio ring are read from it, input is written into it.
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
@@ -22,6 +23,7 @@
 namespace {
 
 constexpr uint32_t kMaxFbPixels = 1024 * 1024;
+constexpr uint32_t kAudioRingFrames = 16384; // ~0.5 s of stereo s16 at 32728 Hz
 
 // Layout is mirrored in web/gaemboy3ds.js (Int32/Float32 views at fixed offsets).
 struct SharedState {
@@ -45,10 +47,18 @@ struct SharedState {
     float load_ms;                    // retro_load_game() time
     int32_t message_seq;
     char message[256];                // last core message / error
+    std::atomic<int32_t> analog_rx;   // page: C-stick [-0x7fff, 0x7fff]
+    std::atomic<int32_t> analog_ry;
+    int32_t audio_ring_ptr;           // stereo s16 ring, kAudioRingFrames frames
+    int32_t audio_ring_frames;
+    std::atomic<uint32_t> audio_write; // frames written (wraps), producer = emulation thread
+    std::atomic<uint32_t> audio_read;  // frames consumed (wraps), consumer = AudioWorklet
+    int32_t audio_dropped;            // frames dropped because the ring was full
 };
 
 SharedState g_state{};
 std::vector<uint32_t> g_fb(kMaxFbPixels);
+std::vector<int16_t> g_audio_ring(kAudioRingFrames * 2);
 std::unordered_map<std::string, std::string> g_vars;
 
 void SetMessage(const char* msg) {
@@ -133,8 +143,23 @@ void VideoRefreshCb(const void* data, unsigned width, unsigned height, size_t pi
     g_state.frame_seq.fetch_add(1, std::memory_order_release);
 }
 
-size_t AudioBatchCb(const int16_t*, size_t frames) {
+size_t AudioBatchCb(const int16_t* data, size_t frames) {
     g_state.audio_frames_total += static_cast<int32_t>(frames);
+    const uint32_t write = g_state.audio_write.load(std::memory_order_relaxed);
+    const uint32_t read = g_state.audio_read.load(std::memory_order_acquire);
+    const uint32_t free_frames = kAudioRingFrames - (write - read);
+    uint32_t n = static_cast<uint32_t>(frames);
+    if (n > free_frames) {
+        // Consumer is behind (tab hidden, audio muted or slow device): drop the newest frames.
+        g_state.audio_dropped += static_cast<int32_t>(n - free_frames);
+        n = free_frames;
+    }
+    for (uint32_t i = 0; i < n; i++) {
+        const uint32_t slot = (write + i) % kAudioRingFrames;
+        g_audio_ring[slot * 2] = data[i * 2];
+        g_audio_ring[slot * 2 + 1] = data[i * 2 + 1];
+    }
+    g_state.audio_write.store(write + n, std::memory_order_release);
     return frames;
 }
 
@@ -154,6 +179,10 @@ int16_t InputStateCb(unsigned port, unsigned device, unsigned index, unsigned id
         if (index == RETRO_DEVICE_INDEX_ANALOG_LEFT) {
             return static_cast<int16_t>(id == RETRO_DEVICE_ID_ANALOG_X ? g_state.analog_lx.load()
                                                                        : g_state.analog_ly.load());
+        }
+        if (index == RETRO_DEVICE_INDEX_ANALOG_RIGHT) {
+            return static_cast<int16_t>(id == RETRO_DEVICE_ID_ANALOG_X ? g_state.analog_rx.load()
+                                                                       : g_state.analog_ry.load());
         }
         return 0;
     case RETRO_DEVICE_POINTER:
@@ -182,6 +211,7 @@ void DefaultOptions() {
     g_vars["citra_use_cpu_jit"] = "disabled";  // no Dynarmic on wasm32
     g_vars["citra_use_fastinterp"] = "enabled";
     g_vars["citra_layout_option"] = "default"; // top screen above bottom screen
+    g_vars["citra_analog_function"] = "c_stick"; // right stick = C-stick only (touch = pointer)
 }
 
 } // namespace
@@ -201,6 +231,8 @@ EMSCRIPTEN_KEEPALIVE int gb3ds_state_size() {
 int main(int argc, char** argv) {
     const char* rom = argc > 1 ? argv[1] : "/rom/game.3dsx";
     g_state.fb_ptr = static_cast<int32_t>(reinterpret_cast<uintptr_t>(g_fb.data()));
+    g_state.audio_ring_ptr = static_cast<int32_t>(reinterpret_cast<uintptr_t>(g_audio_ring.data()));
+    g_state.audio_ring_frames = static_cast<int32_t>(kAudioRingFrames);
     g_state.throttle = 1;
     for (const char* dir :
          {"/gaemboy", "/gaemboy/3ds", "/gaemboy/3ds/system", "/gaemboy/3ds/saves"}) {
@@ -220,8 +252,12 @@ int main(int argc, char** argv) {
     info.path = rom;
     const auto load_start = std::chrono::steady_clock::now();
     if (!retro_load_game(&info)) {
+        // Keep the core's own reason (encrypted ROM, unsupported format, ...) visible.
+        char reason[sizeof(g_state.message)];
+        std::snprintf(reason, sizeof(reason), "Caricamento fallito: %s",
+                      g_state.message_seq > 0 ? g_state.message : "formato non riconosciuto");
         g_state.status = 3;
-        SetMessage("retro_load_game failed");
+        SetMessage(reason);
         return 1;
     }
     g_state.load_ms =

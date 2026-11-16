@@ -1,20 +1,30 @@
-// Page side of the GAEMBOY 3DS web POC: boots the Emscripten module, draws frames and feeds input
-// through the SharedState struct exported by gaemboy3ds_web.cpp (offsets below must match it).
-import createGaemboy3DS from './gaemboy3ds.js';
-
+// Page side of the GAEMBOY 3DS web POC. The emulator runs in gaemboy3ds-worker.js (+ its pthreads);
+// this page draws frames and writes input through the SharedState struct exported by
+// gaemboy3ds_web.cpp (offsets below must match it), and plays audio through an AudioWorklet.
 const OFF = {
   status: 0, frameSeq: 4, fbWidth: 8, fbHeight: 12, fbPtr: 16, throttle: 20, buttons: 24,
   pointerX: 28, pointerY: 32, pointerDown: 36, analogLX: 40, analogLY: 44, framesTotal: 48,
   audioFrames: 52, lastFrameMs: 56, avgFrameMs: 60, emuFps: 64, loadMs: 68, messageSeq: 72,
-  message: 76,
+  message: 76, analogRX: 332, analogRY: 336, audioRingPtr: 340, audioRingFrames: 344,
+  audioWrite: 348, audioRead: 352, audioDropped: 356,
 };
+const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
-const KEYMAP = {
-  ArrowUp: 4, ArrowDown: 5, ArrowLeft: 6, ArrowRight: 7, KeyX: 8, KeyZ: 0, KeyS: 9, KeyA: 1,
-  KeyQ: 10, KeyW: 11, Enter: 3, Backspace: 2,
-};
 const NATIVE_FPS = 59.83;
 const AUDIO_HZ = 32728;
+// libretro joypad ids: B0 Y1 Select2 Start3 Up4 Down5 Left6 Right7 A8 X9 L10 R11 ZL12 ZR13 Home14
+const KEYMAP = {
+  ArrowUp: 4, ArrowDown: 5, ArrowLeft: 6, ArrowRight: 7, KeyX: 8, KeyZ: 0, KeyS: 9, KeyA: 1,
+  KeyQ: 10, KeyW: 11, KeyE: 12, KeyR: 13, Enter: 3, Backspace: 2,
+};
+// Analog sticks on the keyboard (libretro analog: Y grows downwards).
+const STICK_KEYS = {
+  KeyJ: ['analogLX', -1], KeyL: ['analogLX', 1], KeyI: ['analogLY', -1], KeyK: ['analogLY', 1],
+  KeyF: ['analogRX', -1], KeyH: ['analogRX', 1], KeyT: ['analogRY', -1], KeyG: ['analogRY', 1],
+};
+// Standard Gamepad API layout mapped by position, Nintendo style (bottom = B, right = A, ...).
+const PAD_BUTTONS = { 0: 0, 1: 8, 2: 1, 3: 9, 4: 10, 5: 11, 6: 12, 7: 13, 8: 2, 9: 3, 12: 4, 13: 5, 14: 6, 15: 7, 16: 14 };
+const PAD_DEADZONE = 0.15;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -25,50 +35,151 @@ window.__gb3ds = bench;
 
 function log(line) {
   logEl.textContent += `${line}\n`;
+  if (logEl.textContent.length > 200000) logEl.textContent = logEl.textContent.slice(-100000);
   logEl.scrollTop = logEl.scrollHeight;
+}
+// Italian hints for the core messages a user hits with real game dumps.
+const HINTS = [
+  [/encrypted/i, 'Il gioco è criptato: Azahar richiede un dump decrittato della tua cartuccia (es. GodMode9 → "Decrypt").'],
+  [/obtain loader|not supported|invalid format/i, 'Formato non riconosciuto: usa .3ds/.cci/.cxi/.app decrittati o un homebrew .3dsx (i .cia vanno prima installati).'],
+  [/GBA Virtual Console/i, 'I titoli GBA Virtual Console non sono supportati da Azahar.'],
+  [/system archive/i, 'Il gioco richiede file di sistema del 3DS che non sono inclusi.'],
+  [/ROM metadata/i, 'Il file non sembra un gioco 3DS valido (danneggiato, troncato o di un altro sistema).'],
+];
+function notice(text, kind = 'info') {
+  const hint = HINTS.find(([re]) => re.test(text));
+  if (hint) text = `${text} — ${hint[1]}`;
+  $('notice').hidden = false;
+  $('notice').className = kind;
+  $('notice').textContent = text;
 }
 
 if (!crossOriginIsolated) {
-  log('ERRORE: la pagina non è cross-origin isolated (servono header COOP/COEP): i thread WASM non possono partire.');
+  notice('La pagina non è cross-origin isolated (servono header COOP/COEP): i thread WASM non possono partire.', 'bad');
 }
 
-let mod = null;
+let worker = null;
+let memory = null;
 let base = 0;
-const i32 = () => new Int32Array(mod.wasmMemory.buffer);
-const f32 = () => new Float32Array(mod.wasmMemory.buffer);
-const u8 = () => new Uint8Array(mod.wasmMemory.buffer);
+const i32 = () => new Int32Array(memory.buffer);
+const f32 = () => new Float32Array(memory.buffer);
+const u8 = () => new Uint8Array(memory.buffer);
 const readI = (k) => Atomics.load(i32(), (base + OFF[k]) >> 2);
 const writeI = (k, v) => Atomics.store(i32(), (base + OFF[k]) >> 2, v);
 const readF = (k) => f32()[(base + OFF[k]) >> 2];
 
-async function boot(name, bytes) {
-  $('demo').disabled = true;
-  $('demo3d').disabled = true;
-  document.querySelector('label.btn').style.display = 'none';
-  log(`Carico ${name} (${(bytes.length / 1048576).toFixed(1)} MB)…`);
-  const romPath = `/rom/${name.replace(/[^\w.-]/g, '_')}`;
-  const t0 = performance.now();
-  mod = await createGaemboy3DS({
-    arguments: [romPath],
-    print: (s) => log(s),
-    printErr: (s) => log(s),
-    preRun: [(m) => {
-      m.FS.mkdir('/rom');
-      m.FS.writeFile(romPath, bytes);
-    }],
+// ---------------------------------------------------------------- audio
+let audioCtx = null;
+let audioNode = null;
+let audioOn = true;
+async function ensureAudio() {
+  if (audioCtx) return;
+  try {
+    audioCtx = new AudioContext({ latencyHint: 'interactive' });
+    await audioCtx.audioWorklet.addModule('./gaemboy3ds-audio.js');
+    audioNode = new AudioWorkletNode(audioCtx, 'gaemboy3ds-audio', { outputChannelCount: [2] });
+    audioNode.connect(audioCtx.destination);
+    audioNode.port.postMessage({ type: 'mute', muted: !audioOn });
+    if (memory) initAudio();
+  } catch (err) {
+    log(`[audio] non disponibile: ${err}`);
+    audioCtx = null;
+  }
+}
+function initAudio() {
+  if (!audioNode || !memory) return;
+  audioNode.port.postMessage({
+    type: 'init', buffer: memory.buffer, state: base, srcRate: AUDIO_HZ,
+    ringPtr: readI('audioRingPtr'), ringFrames: readI('audioRingFrames'),
   });
-  base = mod._gb3ds_state();
-  log(`Modulo WASM pronto in ${(performance.now() - t0).toFixed(0)} ms (state @ ${base}, ${mod._gb3ds_state_size()} B)`);
-  bench.startedAt = performance.now();
-  $('throttle').disabled = false;
-  requestAnimationFrame(draw);
-  setInterval(updateStats, 250);
+  audioCtx.resume();
 }
 
+// ---------------------------------------------------------------- boot
+function boot(file) {
+  if (worker) return;
+  for (const id of ['demo', 'demo3d']) $(id).disabled = true;
+  $('pick').classList.add('disabled');
+  $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
+  log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
+  const t0 = performance.now();
+  worker = new Worker('./gaemboy3ds-worker.js', { type: 'module' });
+  worker.onmessage = ({ data }) => {
+    switch (data.type) {
+      case 'log':
+        log(data.line);
+        break;
+      case 'error':
+        notice(`Errore nel caricamento del modulo: ${data.message}`, 'bad');
+        break;
+      case 'saved':
+        $('s-saves').textContent = data.ok ? `ok ${new Date().toLocaleTimeString()}` : `errore: ${data.error}`;
+        break;
+      case 'ready':
+        memory = data.memory;
+        base = data.state;
+        if (data.stateSize !== STATE_SIZE) {
+          notice(`Struct condivisa incoerente (${data.stateSize} B, attesi ${STATE_SIZE}): ricompila.`, 'bad');
+          return;
+        }
+        log(`Modulo WASM pronto in ${(performance.now() - t0).toFixed(0)} ms`);
+        bench.startedAt = performance.now();
+        for (const id of ['throttle', 'audio', 'save']) $(id).disabled = false;
+        initAudio();
+        requestAnimationFrame(frame);
+        setInterval(updateStats, 250);
+        break;
+      default:
+        break;
+    }
+  };
+  worker.postMessage({ type: 'boot', file });
+}
+
+// ---------------------------------------------------------------- video + input loop
 let lastSeq = 0;
 let lastMsgSeq = 0;
 let image = null;
-function draw() {
+let keyButtons = 0;
+const keySticks = new Set();
+let padName = '';
+
+function readGamepad() {
+  const pads = navigator.getGamepads ? navigator.getGamepads() : [];
+  const pad = [...pads].find((p) => p && p.connected);
+  if (!pad) {
+    padName = '';
+    return { buttons: 0, axes: [0, 0, 0, 0] };
+  }
+  padName = pad.id;
+  let buttons = 0;
+  for (const [idx, id] of Object.entries(PAD_BUTTONS)) {
+    const b = pad.buttons[idx];
+    if (b && (b.pressed || b.value > 0.5)) buttons |= 1 << id;
+  }
+  const axes = [0, 1, 2, 3].map((i) => {
+    const v = pad.axes[i] || 0;
+    return Math.abs(v) < PAD_DEADZONE ? 0 : v;
+  });
+  return { buttons, axes };
+}
+
+function frame() {
+  // input: keyboard | gamepad
+  const pad = readGamepad();
+  writeI('buttons', keyButtons | pad.buttons);
+  const key = { analogLX: 0, analogLY: 0, analogRX: 0, analogRY: 0 };
+  for (const code of keySticks) {
+    const [axis, dir] = STICK_KEYS[code];
+    key[axis] += dir;
+  }
+  const axis = (k, v) => writeI(k, Math.round(Math.max(-1, Math.min(1, key[k] || v)) * 0x7fff));
+  axis('analogLX', pad.axes[0]);
+  axis('analogLY', pad.axes[1]);
+  axis('analogRX', pad.axes[2]);
+  axis('analogRY', pad.axes[3]);
+
+  // video
   const seq = readI('frameSeq');
   if (seq !== lastSeq) {
     lastSeq = seq;
@@ -79,15 +190,13 @@ function draw() {
       if (!image || image.width !== w || image.height !== h) {
         canvas.width = w;
         canvas.height = h;
-        canvas.style.width = `${w}px`;
-        canvas.style.height = `${h}px`;
         image = new ImageData(w, h);
       }
       image.data.set(u8().subarray(ptr, ptr + w * h * 4));
       ctx.putImageData(image, 0, 0);
     }
   }
-  requestAnimationFrame(draw);
+  requestAnimationFrame(frame);
 }
 
 function updateStats() {
@@ -98,6 +207,7 @@ function updateStats() {
   const audio = readI('audioFrames');
   const elapsed = (performance.now() - bench.startedAt) / 1000;
   const speed = (100 * fps) / NATIVE_FPS;
+  const buffered = (readI('audioWrite') - readI('audioRead')) >>> 0;
   $('s-status').textContent = STATUS[status] ?? status;
   $('s-status').className = status === 2 ? 'good' : status === 3 ? 'bad' : 'mid';
   $('s-load').textContent = readF('loadMs') ? `${readF('loadMs').toFixed(0)} ms` : '—';
@@ -106,77 +216,81 @@ function updateStats() {
   $('s-speed').textContent = `${speed.toFixed(0)}%`;
   $('s-speed').className = speed >= 95 ? 'good' : speed >= 60 ? 'mid' : 'bad';
   $('s-ms').textContent = `${avgMs.toFixed(1)} ms (budget 16,7)`;
-  $('s-audio').textContent = `${(audio / AUDIO_HZ).toFixed(1)} s in ${elapsed.toFixed(1)} s`;
-  $('s-mem').textContent = `${navigator.hardwareConcurrency} core · ${(mod.wasmMemory.buffer.byteLength / 1048576).toFixed(0)} MB`;
+  $('s-audio').textContent = audio
+    ? `${(audio / AUDIO_HZ).toFixed(1)} s · buffer ${((1000 * buffered) / AUDIO_HZ).toFixed(0)} ms${audioOn ? '' : ' · muto'}`
+    : `nessun campione${audioOn ? '' : ' · muto'}`;
+  $('s-input').textContent = padName ? `tastiera + ${padName.slice(0, 28)}` : 'tastiera + touch';
+  $('s-mem').textContent = `${navigator.hardwareConcurrency} core · ${(memory.buffer.byteLength / 1048576).toFixed(0)} MB`;
   const msgSeq = readI('messageSeq');
   if (msgSeq !== lastMsgSeq) {
     lastMsgSeq = msgSeq;
     const bytes = u8().slice(base + OFF.message, base + OFF.message + 256);
-    log(`[core] ${new TextDecoder().decode(bytes.subarray(0, bytes.indexOf(0)))}`);
+    const msg = new TextDecoder().decode(bytes.subarray(0, bytes.indexOf(0)));
+    log(`[core] ${msg}`);
+    notice(msg, status === 3 || /encrypt|fail|error|unable|not supported/i.test(msg) ? 'bad' : 'info');
   }
+  if (status === 3 && $('notice').hidden) notice('Il core non è riuscito a caricare il file (vedi log).', 'bad');
   bench.frames.push({ t: elapsed, frames, fps, avgMs, audioSeconds: audio / AUDIO_HZ, status });
 }
 
-async function startDemo(file) {
-  const res = await fetch(`./homebrew/${file}`);
+// ---------------------------------------------------------------- UI
+async function startDemo(name) {
+  ensureAudio();
+  const res = await fetch(`./homebrew/${name}`);
   if (!res.ok) {
-    log(`Demo ${file} non trovata (${res.status}): usa "Carica" con un tuo homebrew.`);
+    notice(`Demo ${name} non trovata (${res.status}): usa "Carica gioco…".`, 'bad');
     return;
   }
-  boot(file, new Uint8Array(await res.arrayBuffer()));
+  boot(new File([await res.blob()], name));
 }
-for (const id of ['demo', 'demo3d']) $(id).onclick = () => startDemo($(id).dataset.file);
-$('file').onchange = async (e) => {
+$('demo').onclick = () => startDemo($('demo').dataset.file);
+$('demo3d').onclick = () => startDemo($('demo3d').dataset.file);
+$('file').onchange = (e) => {
   const file = e.target.files[0];
-  if (file) boot(file.name, new Uint8Array(await file.arrayBuffer()));
+  if (!file) return;
+  ensureAudio();
+  boot(file);
 };
 $('throttle').onclick = () => {
   const next = readI('throttle') ? 0 : 1;
   writeI('throttle', next);
   $('throttle').textContent = next ? 'Velocità: 60 fps' : 'Velocità: massima';
 };
-
-let buttons = 0;
-const setButton = (id, down) => {
-  buttons = down ? buttons | (1 << id) : buttons & ~(1 << id);
-  if (mod) writeI('buttons', buttons);
+$('audio').onclick = async () => {
+  audioOn = !audioOn;
+  await ensureAudio();
+  if (audioNode) audioNode.port.postMessage({ type: 'mute', muted: !audioOn });
+  if (audioCtx) audioCtx.resume();
+  $('audio').textContent = audioOn ? 'Audio: on' : 'Audio: off';
 };
-// Circle pad on I/J/K/L (libretro analog: Y grows downwards).
-const STICK = { KeyJ: ['analogLX', -1], KeyL: ['analogLX', 1], KeyI: ['analogLY', -1], KeyK: ['analogLY', 1] };
-const stickHeld = new Set();
-function updateStick() {
-  if (!mod) return;
-  let lx = 0, ly = 0;
-  for (const code of stickHeld) {
-    const [axis, dir] = STICK[code];
-    if (axis === 'analogLX') lx += dir; else ly += dir;
-  }
-  writeI('analogLX', Math.max(-1, Math.min(1, lx)) * 0x7fff);
-  writeI('analogLY', Math.max(-1, Math.min(1, ly)) * 0x7fff);
-}
+$('save').onclick = () => worker && worker.postMessage({ type: 'sync' });
+addEventListener('pagehide', () => worker && worker.postMessage({ type: 'sync' }));
+
 addEventListener('keydown', (e) => {
-  if (e.code in KEYMAP) { setButton(KEYMAP[e.code], true); e.preventDefault(); }
-  if (e.code in STICK) { stickHeld.add(e.code); updateStick(); e.preventDefault(); }
+  if (!memory || e.target instanceof HTMLInputElement) return;
+  if (e.code in KEYMAP) { keyButtons |= 1 << KEYMAP[e.code]; e.preventDefault(); }
+  if (e.code in STICK_KEYS) { keySticks.add(e.code); e.preventDefault(); }
 });
 addEventListener('keyup', (e) => {
-  if (e.code in KEYMAP) { setButton(KEYMAP[e.code], false); e.preventDefault(); }
-  if (e.code in STICK) { stickHeld.delete(e.code); updateStick(); e.preventDefault(); }
+  if (e.code in KEYMAP) { keyButtons &= ~(1 << KEYMAP[e.code]); e.preventDefault(); }
+  if (e.code in STICK_KEYS) { keySticks.delete(e.code); e.preventDefault(); }
 });
+addEventListener('blur', () => { keyButtons = 0; keySticks.clear(); });
 
 // libretro pointer space is [-0x7fff, 0x7fff] over the whole output frame; the core maps it onto
-// the bottom screen when it falls inside its rectangle.
+// the bottom screen when it falls inside its rectangle. Works for mouse, pen and touch.
 function pointer(e, down) {
-  if (!mod) return;
+  if (!memory) return;
   const r = canvas.getBoundingClientRect();
-  const x = Math.round((((e.clientX - r.left) / r.width) * 2 - 1) * 0x7fff);
-  const y = Math.round((((e.clientY - r.top) / r.height) * 2 - 1) * 0x7fff);
-  writeI('pointerX', x);
-  writeI('pointerY', y);
+  writeI('pointerX', Math.round((((e.clientX - r.left) / r.width) * 2 - 1) * 0x7fff));
+  writeI('pointerY', Math.round((((e.clientY - r.top) / r.height) * 2 - 1) * 0x7fff));
   if (down !== undefined) writeI('pointerDown', down ? 1 : 0);
 }
 canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); pointer(e, true); });
 canvas.addEventListener('pointermove', (e) => pointer(e));
 canvas.addEventListener('pointerup', (e) => pointer(e, false));
+canvas.addEventListener('pointercancel', (e) => pointer(e, false));
 
-const demoParam = new URLSearchParams(location.search).get('demo');
-if (demoParam !== null) (demoParam === '3d' ? $('demo3d') : $('demo')).click();
+const params = new URLSearchParams(location.search);
+if (params.has('mute')) { audioOn = false; $('audio').textContent = 'Audio: off'; }
+if (params.get('demo') !== null) (params.get('demo') === '3d' ? $('demo3d') : $('demo')).click();
