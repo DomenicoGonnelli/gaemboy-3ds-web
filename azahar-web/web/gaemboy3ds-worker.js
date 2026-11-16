@@ -11,6 +11,23 @@ const SYNC_MS = 10000;
 
 const post = (type, data = {}, transfer) => self.postMessage({ type, ...data }, transfer);
 let mod = null;
+
+// Core logs are batched: a game spamming warnings must not flood the page's main thread.
+const LOG_MAX_PER_FLUSH = 200;
+let logBuffer = [];
+let logDropped = 0;
+let logTotal = 0;
+const logLine = (line) => {
+  logTotal++;
+  if (logBuffer.length < LOG_MAX_PER_FLUSH) logBuffer.push(line);
+  else logDropped++;
+};
+setInterval(() => {
+  if (!logBuffer.length && !logDropped) return;
+  post('logs', { lines: logBuffer, dropped: logDropped, total: logTotal });
+  logBuffer = [];
+  logDropped = 0;
+}, 250);
 let syncing = false;
 
 function syncSaves(reason) {
@@ -40,9 +57,10 @@ self.onmessage = async ({ data }) => {
   const romName = file.name.replace(/[^\w.\- ]/g, '_');
   try {
     mod = await createGaemboy3DS({
+      canvas: data.canvas || undefined,
       arguments: [`/rom/${romName}`, ...(data.extraArgs || [])],
-      print: (line) => post('log', { line }),
-      printErr: (line) => post('log', { line }),
+      print: logLine,
+      printErr: logLine,
       preRun: [(m) => {
         const { FS } = m;
         FS.mkdir('/rom');
@@ -51,7 +69,7 @@ self.onmessage = async ({ data }) => {
         FS.mount(FS.filesystems.IDBFS, {}, SAVES);
         m.addRunDependency('gb3ds-idbfs');
         FS.syncfs(true, (err) => {
-          if (err) post('log', { line: `[gaemboy] IDBFS non disponibile: ${err}` });
+          if (err) logLine(`[gaemboy] IDBFS non disponibile: ${err}`);
           if (data.dspPlaceholder !== false) {
             try {
               FS.stat(DSP_PLACEHOLDER);

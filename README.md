@@ -6,6 +6,8 @@
   (*"CPU/JIT → WASM: molto alto"*). Un interprete ARM11 in WASM regge il tempo reale di un 3DS?
 - **POC 2 — Azahar completo in WebAssembly** ([`azahar-web/`](azahar-web)): il *checkpoint fondamentale*
   dello studio, cioè sorgente → Emscripten → `.wasm` → Chrome → software locale → **BOOT → GAMEPLAY**.
+- **POC 3 — Renderer hardware WebGL2** ([`azahar-web/`](azahar-web)): il renderer OpenGL di Azahar adattato a
+  WebGL2 (GLES 3.0) su `OffscreenCanvas` in un Web Worker.
 
 ## POC 2 — Azahar completo nel browser: **BOOT e GAMEPLAY riusciti**
 
@@ -19,7 +21,23 @@
 | Test 3D (senza audio) | *Craftus Reloaded* 0.3 (MIT, citro3d, nessun audio): menu touch, creazione del mondo, **mondo 3D a blocchi renderizzato correttamente**, camminata, rotazione col Circle Pad e cambio blocco funzionano. **~16 fps (27%)**, 61 ms per frame. |
 | Dove va il tempo | CPU emulata (FastInterp) **2–3%**. **Renderer software PICA200 ≈ 80%** sia in 2D sia in 3D: su un thread solo Super Haxagon farebbe 12 fps. Nel mondo 3D di Craftus: rasterizzazione 37% + attesa dei worker 37% + sincronizzazione 7%, shader PICA 6%. |
 | Audio | Non verificato: gli homebrew libctru avviano l'audio solo con `sdmc:/3ds/dspfirm.cdc` (firmware DSP Nintendo, non distribuibile). |
-| Verdetto | **Architettura validata** (core, thread, FS, input, frame). **Il prossimo collo di bottiglia è la GPU**: per i giochi 3D commerciali serve il renderer hardware WebGL2. Il renderer software basta solo per homebrew 2D su desktop potenti. |
+| Verdetto POC 2 | **Architettura validata** (core, thread, FS, input, frame). Col renderer software la GPU pesa ~80–90%. |
+
+## POC 3 — Renderer hardware WebGL2: **6× più veloce nel 3D**
+
+| | Software (POC 2) | **WebGL2 (POC 3)** |
+|---|---|---|
+| Super Haxagon (2D, tempo/frame) | 23–25 ms (~41–54 fps) | **0,9–1,0 ms** (~53–60 fps) |
+| Craftus Reloaded (mondo 3D, tempo/frame) | 61,5 ms (~16 fps) | **9,8 ms in Chrome, 3,8 ms in WebKit** (**6×–16× più veloce**, sotto il budget di 16,7 ms) |
+| Architettura | `PROXY_TO_PTHREAD` + blit RGBA CPU | `OffscreenCanvas` trasferito al Web Worker, WebGL2 diretto (zero copie pixel) |
+| Fallback | — | `?sw` nell'URL riattiva il renderer software per confronto |
+
+Modifiche principali in `azahar-web/patches/azahar.patch`:
+- `gl_shader_util.cpp`: adattamento GLSL 320/430 → `#version 300 es` (rimozione `layout(binding/location)` su uniform e varying, `out gl_PerVertex`, `#define fma`), binding esplicito di UBO (`vs_pica_data`, `vs_data`, `fs_data`) e sampler al link.
+- `gl_stream_buffer.cpp`: staging buffer CPU + `glBufferSubData` (WebGL2 non ha `glMapBufferRange`/`glBufferStorage`).
+- `gl_rasterizer.cpp` + `glsl_fs_shader_gen.cpp` + `gl_state.cpp`: LUT (`lf`/`rg`/`rgba`) da `samplerBuffer` (`GL_TEXTURE_BUFFER`) a texture 2D `1024×H` (`FetchLut`), `glDrawRangeElementsBaseVertex` sostituito da rebase degli indici + `glDrawRangeElements`.
+- `gl_shader_manager.cpp`: `use_geometry_shader = false` in `CalcExtraConfig` (WebGL2 non ha geometry shader; i vertex shader emettono direttamente verso il fragment shader).
+- `gl_blit_helper.cpp` + `gl_texture_runtime.cpp`: `glProgramUniform*` → `glUseProgram`+`glUniform*`, `glCopyImageSubData` → `glBlitFramebuffer`/`glCopyTexSubImage2D`, guardie su MSAA/`glObjectLabel`/`uimage2D`.
 
 Dettagli, metodo e come provarlo: [sezione POC 2](#poc-2--dettagli).
 

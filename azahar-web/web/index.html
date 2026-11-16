@@ -32,7 +32,7 @@
 </head>
 <body>
 <h1>GAEMBOY 3DS LAB — Azahar (core completo) in WebAssembly</h1>
-<p class="sub">Emulatore 3DS Azahar compilato con Emscripten (CPU FastInterp, renderer software, kernel e servizi HLE) in un Web Worker.
+<p class="sub">Emulatore 3DS Azahar compilato con Emscripten (CPU FastInterp, renderer WebGL2 / software con ?sw, kernel e servizi HLE) in un Web Worker.
   Il gioco viene letto <b>localmente</b> a blocchi, senza caricarlo in memoria per intero e senza upload. Formati: <code>.3ds</code>/<code>.cci</code>/<code>.cxi</code>/<code>.app</code>
   <b>decrittati</b> (dump della tua cartuccia) e homebrew <code>.3dsx</code>/<code>.elf</code>. I salvataggi restano nel browser (IndexedDB).</p>
 <div>
@@ -59,6 +59,7 @@
       <tr><td>Input</td><td id="s-input">—</td></tr>
       <tr><td>Salvataggi (IndexedDB)</td><td id="s-saves">—</td></tr>
       <tr><td>Thread / memoria</td><td id="s-mem">—</td></tr>
+      <tr><td>Log del core</td><td id="s-log">—</td></tr>
     </table>
     <div class="keys">
       <b>Tastiera</b>: <kbd>←↑→↓</kbd> D-pad · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>S</kbd> X · <kbd>A</kbd> Y ·

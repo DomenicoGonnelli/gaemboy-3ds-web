@@ -28,16 +28,29 @@ const PAD_DEADZONE = 0.15;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
-const ctx = canvas.getContext('2d');
+const useSw = new URLSearchParams(location.search).has('sw');
+const ctx = useSw ? canvas.getContext('2d') : null;
 const logEl = $('log');
 const bench = { startedAt: 0, frames: [] };
 window.__gb3ds = bench;
 
+// The log panel keeps the last lines only and is re-rendered at most twice a second.
+const LOG_KEEP = 400;
+const logLines = [];
+let logDirty = false;
+let logTotal = 0;
+let logRate = { t: performance.now(), total: 0, perSec: 0 };
 function log(line) {
-  logEl.textContent += `${line}\n`;
-  if (logEl.textContent.length > 200000) logEl.textContent = logEl.textContent.slice(-100000);
-  logEl.scrollTop = logEl.scrollHeight;
+  logLines.push(line);
+  if (logLines.length > LOG_KEEP) logLines.splice(0, logLines.length - LOG_KEEP);
+  logDirty = true;
 }
+setInterval(() => {
+  if (!logDirty) return;
+  logDirty = false;
+  logEl.textContent = logLines.join('\n');
+  logEl.scrollTop = logEl.scrollHeight;
+}, 500);
 // Italian hints for the core messages a user hits with real game dumps.
 const HINTS = [
   [/encrypted/i, 'Il gioco è criptato: Azahar richiede un dump decrittato della tua cartuccia (es. GodMode9 → "Decrypt").'],
@@ -106,8 +119,10 @@ function boot(file) {
   worker = new Worker('./gaemboy3ds-worker.js', { type: 'module' });
   worker.onmessage = ({ data }) => {
     switch (data.type) {
-      case 'log':
-        log(data.line);
+      case 'logs':
+        for (const line of data.lines) log(line);
+        if (data.dropped) log(`… ${data.dropped} righe di log omesse`);
+        logTotal = data.total;
         break;
       case 'error':
         notice(`Errore nel caricamento del modulo: ${data.message}`, 'bad');
@@ -135,7 +150,13 @@ function boot(file) {
   };
   // ?args=a,b passes extra argv to the frontend (e.g. --io-selftest for large-file diagnostics).
   const extraArgs = (new URLSearchParams(location.search).get('args') || '').split(',').filter(Boolean);
-  worker.postMessage({ type: 'boot', file, extraArgs });
+  if (useSw) extraArgs.push('--sw');
+  if (!useSw && canvas.transferControlToOffscreen) {
+    const offscreen = canvas.transferControlToOffscreen();
+    worker.postMessage({ type: 'boot', file, extraArgs, canvas: offscreen }, [offscreen]);
+  } else {
+    worker.postMessage({ type: 'boot', file, extraArgs });
+  }
 }
 
 // ---------------------------------------------------------------- video + input loop
@@ -181,21 +202,23 @@ function frame() {
   axis('analogRX', pad.axes[2]);
   axis('analogRY', pad.axes[3]);
 
-  // video
-  const seq = readI('frameSeq');
-  if (seq !== lastSeq) {
-    lastSeq = seq;
-    const w = readI('fbWidth');
-    const h = readI('fbHeight');
-    const ptr = readI('fbPtr');
-    if (w > 0 && h > 0) {
-      if (!image || image.width !== w || image.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-        image = new ImageData(w, h);
+  // video (in WebGL2 mode the worker draws directly onto the OffscreenCanvas)
+  if (ctx) {
+    const seq = readI('frameSeq');
+    if (seq !== lastSeq) {
+      lastSeq = seq;
+      const w = readI('fbWidth');
+      const h = readI('fbHeight');
+      const ptr = readI('fbPtr');
+      if (w > 0 && h > 0) {
+        if (!image || image.width !== w || image.height !== h) {
+          canvas.width = w;
+          canvas.height = h;
+          image = new ImageData(w, h);
+        }
+        image.data.set(u8().subarray(ptr, ptr + w * h * 4));
+        ctx.putImageData(image, 0, 0);
       }
-      image.data.set(u8().subarray(ptr, ptr + w * h * 4));
-      ctx.putImageData(image, 0, 0);
     }
   }
   requestAnimationFrame(frame);
@@ -223,6 +246,12 @@ function updateStats() {
     : `nessun campione${audioOn ? '' : ' · muto'}`;
   $('s-input').textContent = padName ? `tastiera + ${padName.slice(0, 28)}` : 'tastiera + touch';
   $('s-mem').textContent = `${navigator.hardwareConcurrency} core · ${(memory.buffer.byteLength / 1048576).toFixed(0)} MB`;
+  const now = performance.now();
+  if (now - logRate.t >= 2000) {
+    logRate = { t: now, total: logTotal, perSec: ((logTotal - logRate.total) * 1000) / (now - logRate.t) };
+  }
+  $('s-log').textContent = `${logRate.perSec.toFixed(0)} righe/s`;
+  $('s-log').className = logRate.perSec > 50 ? 'mid' : '';
   const msgSeq = readI('messageSeq');
   if (msgSeq !== lastMsgSeq) {
     lastMsgSeq = msgSeq;

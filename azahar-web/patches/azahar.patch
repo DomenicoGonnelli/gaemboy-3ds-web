@@ -1,7 +1,16 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index e99de6a..2474c17 100644
+index e99de6a..dccab90 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
+@@ -147,7 +147,7 @@ CMAKE_DEPENDENT_OPTION(ENABLE_LIBUSB "Enable libusb for GameCube Adapter support
+ CMAKE_DEPENDENT_OPTION(ENABLE_FFMPEG "Enable features which require FFmpeg to function" ON "ENABLE_QT" OFF)
+ 
+ CMAKE_DEPENDENT_OPTION(ENABLE_SOFTWARE_RENDERER "Enables the software renderer" ON "NOT ANDROID" OFF)
+-CMAKE_DEPENDENT_OPTION(ENABLE_OPENGL "Enables the OpenGL renderer" ${DEFAULT_ENABLE_OPENGL} "NOT APPLE" OFF)
++CMAKE_DEPENDENT_OPTION(ENABLE_OPENGL "Enables the OpenGL renderer" ${DEFAULT_ENABLE_OPENGL} "NOT APPLE OR EMSCRIPTEN" OFF)
+ # NetBSD doesn't support Vulkan yet, remove this check when it does.
+ CMAKE_DEPENDENT_OPTION(ENABLE_VULKAN "Enables the Vulkan renderer" ON "NOT (BSD MATCHES \"NetBSD\")" OFF)
+ 
 @@ -317,7 +317,7 @@ function(check_submodules_present)
          endif()
      endforeach()
@@ -38,10 +47,10 @@ index cfb63c3..bb2d6f6 100644
 +    add_library(tsl::robin_map ALIAS robin_map)
 +endif()
 diff --git a/src/citra_libretro/CMakeLists.txt b/src/citra_libretro/CMakeLists.txt
-index e28f994..7700ec6 100644
+index e28f994..4afb381 100644
 --- a/src/citra_libretro/CMakeLists.txt
 +++ b/src/citra_libretro/CMakeLists.txt
-@@ -99,3 +99,17 @@ else()
+@@ -99,3 +99,22 @@ else()
  endif()
  
  add_custom_target(azahar_libretro DEPENDS citra_libretro)
@@ -54,6 +63,11 @@ index e28f994..7700ec6 100644
 +            citra_libretro.cpp
 +            $<TARGET_OBJECTS:citra_libretro_common>)
 +    target_compile_definitions(gaemboy3ds PRIVATE HAVE_LIBRETRO)
++    if (ENABLE_OPENGL)
++        target_compile_definitions(citra_libretro_common PRIVATE USING_GLES)
++        target_compile_definitions(gaemboy3ds PRIVATE USING_GLES)
++        target_link_libraries(gaemboy3ds PRIVATE glad)
++    endif()
 +    target_link_libraries(gaemboy3ds PRIVATE citra_common citra_core video_core audio_core
 +            input_common Boost::boost dds-ktx libretro tsl::robin_map Threads::Threads)
 +    separate_arguments(_gaemboy3ds_link_flags UNIX_COMMAND "${GAEMBOY3DS_LINK_FLAGS}")
@@ -160,6 +174,764 @@ index 814863e..d2c1caa 100644
  endif()
  
  if (CITRA_USE_PRECOMPILED_HEADERS)
+diff --git a/src/video_core/renderer_opengl/gl_blit_helper.cpp b/src/video_core/renderer_opengl/gl_blit_helper.cpp
+index 6f3de4e..132f6f3 100644
+--- a/src/video_core/renderer_opengl/gl_blit_helper.cpp
++++ b/src/video_core/renderer_opengl/gl_blit_helper.cpp
+@@ -49,8 +49,17 @@ OGLProgram CreateProgram(std::string_view frag, std::string_view debug_name) {
+     OGLProgram program;
+     program.SetDebugName(debug_name);
+     program.Create(HostShaders::FULL_SCREEN_TRIANGLE_VERT, frag);
++#ifdef __EMSCRIPTEN__
++    GLint prev = 0;
++    glGetIntegerv(GL_CURRENT_PROGRAM, &prev);
++    glUseProgram(program.handle);
++    if (GLint l = glGetUniformLocation(program.handle, "tex_scale"); l != -1) glUniform2f(l, 1.f, 1.f);
++    if (GLint l = glGetUniformLocation(program.handle, "tex_offset"); l != -1) glUniform2f(l, 0.f, 0.f);
++    glUseProgram(static_cast<GLuint>(prev));
++#else
+     glProgramUniform2f(program.handle, 0, 1.f, 1.f);
+     glProgramUniform2f(program.handle, 1, 0.f, 0.f);
++#endif
+     return program;
+ }
+ 
+@@ -67,11 +76,15 @@ BlitHelper::BlitHelper(const Driver& driver_)
+       gradient_y_program{CreateProgram(HostShaders::Y_GRADIENT_FRAG, "Y_GRADIENT_FRAG")},
+       refine_program{CreateProgram(HostShaders::REFINE_FRAG, "REFINE_FRAG")},
+       d24s8_to_rgba8{CreateProgram(HostShaders::D24S8_TO_RGBA8_FRAG, "D24S8_TO_RGBA8_FRAG")},
++#ifdef __EMSCRIPTEN__
++      rgba4_to_rgb5a1{CreateProgram(HostShaders::RGBA4_TO_RGB5A1_FRAG, "RGBA4_TO_RGB5A1_FRAG")} {
++#else
+       d24s8_to_rgba8_ms{
+           CreateProgram(HostShaders::D24S8_TO_RGBA8_MS_FRAG, "D24S8_TO_RGBA8_MS_FRAG")},
+       rgba4_to_rgb5a1{CreateProgram(HostShaders::RGBA4_TO_RGB5A1_FRAG, "RGBA4_TO_RGB5A1_FRAG")},
+       rgba4_to_rgb5a1_ms{
+           CreateProgram(HostShaders::RGBA4_TO_RGB5A1_MS_FRAG, "RGBA4_TO_RGB5A1_MS_FRAG")} {
++#endif
+     vao.Create();
+     read_fbo.Create();
+     draw_fbo.Create();
+@@ -120,11 +133,14 @@ bool BlitHelper::ConvertDS24S8ToRGBA8(Surface& source, Surface& dest,
+         state.Apply();
+         glActiveTexture(GL_TEXTURE1);
+ 
++#ifndef __EMSCRIPTEN__
+         if (multisample) {
+             glTexStorage2DMultisample(textarget, source.sample_count, GL_DEPTH24_STENCIL8,
+                                       temp_extent.width, temp_extent.height, true);
+ 
+-        } else {
++        } else
++#endif
++        {
+             glTexStorage2D(textarget, 1, GL_DEPTH24_STENCIL8, temp_extent.width,
+                            temp_extent.height);
+             glTexParameteri(textarget, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+@@ -137,9 +153,25 @@ bool BlitHelper::ConvertDS24S8ToRGBA8(Surface& source, Surface& dest,
+ 
+     glActiveTexture(GL_TEXTURE1);
+     if (!use_texture_view) {
++#ifdef __EMSCRIPTEN__
++        glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo.handle);
++        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, textarget,
++                               source.Handle(multisample ? 3 : 1), 0);
++        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fbo.handle);
++        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, textarget,
++                               temp_tex.handle, 0);
++        glBlitFramebuffer(copy.src_offset.x, copy.src_offset.y,
++                          copy.src_offset.x + copy.extent.width,
++                          copy.src_offset.y + copy.extent.height, copy.src_offset.x,
++                          copy.src_offset.y, copy.src_offset.x + copy.extent.width,
++                          copy.src_offset.y + copy.extent.height,
++                          GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, GL_NEAREST);
++        state.Apply();
++#else
+         glCopyImageSubData(source.Handle(multisample ? 3 : 1), textarget, 0, copy.src_offset.x,
+                            copy.src_offset.y, 0, temp_tex.handle, textarget, 0, copy.src_offset.x,
+                            copy.src_offset.y, 0, copy.extent.width, copy.extent.height, 1);
++#endif
+     }
+     glTexParameteri(textarget, GL_DEPTH_STENCIL_TEXTURE_MODE, GL_STENCIL_INDEX);
+ 
+@@ -280,9 +312,19 @@ void BlitHelper::FilterAnime4K(Surface& surface, const VideoCore::TextureBlit& b
+     auto LUMAD = setup_temp_tex(GL_R16F, GL_RED, temp_rect.GetWidth(), temp_rect.GetHeight());
+ 
+     // Copy to SRC
++#ifdef __EMSCRIPTEN__
++    glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbo.handle);
++    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
++                           surface.Handle(0), 0);
++    glBindTexture(GL_TEXTURE_2D, SRC.tex.handle);
++    glCopyTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, blit.src_rect.left, blit.src_rect.bottom,
++                        src_width, src_height);
++    state.Apply();
++#else
+     glCopyImageSubData(surface.Handle(0), GL_TEXTURE_2D, 0, blit.src_rect.left,
+                        blit.src_rect.bottom, 0, SRC.tex.handle, GL_TEXTURE_2D, 0, 0, 0, 0,
+                        src_width, src_height, 1);
++#endif
+ 
+     state.texture_units[0].texture_2d = SRC.tex.handle;
+     state.texture_units[1].texture_2d = LUMAD.tex.handle;
+@@ -332,7 +374,14 @@ void BlitHelper::FilterXbrz(Surface& surface, const VideoCore::TextureBlit& blit
+     SCOPE_EXIT({ prev_state.Apply(); });
+     state.texture_units[0].texture_2d = surface.Handle(0);
+     state.texture_units[0].target = GL_TEXTURE_2D;
++#ifdef __EMSCRIPTEN__
++    glUseProgram(xbrz_program.handle);
++    if (GLint l = glGetUniformLocation(xbrz_program.handle, "scale"); l != -1) {
++        glUniform1f(l, static_cast<GLfloat>(surface.res_scale));
++    }
++#else
+     glProgramUniform1f(xbrz_program.handle, 2, static_cast<GLfloat>(surface.res_scale));
++#endif
+     SetParams(xbrz_program, surface.RealExtent(false), blit.src_rect);
+     Draw(xbrz_program, surface.Handle(), draw_fbo.handle, blit.dst_level, blit.dst_rect);
+ }
+@@ -348,13 +397,20 @@ void BlitHelper::FilterMMPX(Surface& surface, const VideoCore::TextureBlit& blit
+ 
+ void BlitHelper::SetParams(OGLProgram& program, const VideoCore::Extent& src_extent,
+                            Common::Rectangle<u32> src_rect) {
+-    glProgramUniform2f(
+-        program.handle, 0,
+-        static_cast<float>(src_rect.right - src_rect.left) / static_cast<float>(src_extent.width),
+-        static_cast<float>(src_rect.top - src_rect.bottom) / static_cast<float>(src_extent.height));
+-    glProgramUniform2f(program.handle, 1,
+-                       static_cast<float>(src_rect.left) / static_cast<float>(src_extent.width),
+-                       static_cast<float>(src_rect.bottom) / static_cast<float>(src_extent.height));
++    const float sx =
++        static_cast<float>(src_rect.right - src_rect.left) / static_cast<float>(src_extent.width);
++    const float sy =
++        static_cast<float>(src_rect.top - src_rect.bottom) / static_cast<float>(src_extent.height);
++    const float ox = static_cast<float>(src_rect.left) / static_cast<float>(src_extent.width);
++    const float oy = static_cast<float>(src_rect.bottom) / static_cast<float>(src_extent.height);
++#ifdef __EMSCRIPTEN__
++    glUseProgram(program.handle);
++    if (GLint l = glGetUniformLocation(program.handle, "tex_scale"); l != -1) glUniform2f(l, sx, sy);
++    if (GLint l = glGetUniformLocation(program.handle, "tex_offset"); l != -1) glUniform2f(l, ox, oy);
++#else
++    glProgramUniform2f(program.handle, 0, sx, sy);
++    glProgramUniform2f(program.handle, 1, ox, oy);
++#endif
+ }
+ 
+ void BlitHelper::Draw(OGLProgram& program, GLuint dst_tex, GLuint dst_fbo, u32 dst_level,
+diff --git a/src/video_core/renderer_opengl/gl_driver.cpp b/src/video_core/renderer_opengl/gl_driver.cpp
+index 0c02521..b03b701 100644
+--- a/src/video_core/renderer_opengl/gl_driver.cpp
++++ b/src/video_core/renderer_opengl/gl_driver.cpp
+@@ -177,7 +177,12 @@ void Driver::CheckExtensionSupport() {
+     nv_fragment_shader_interlock = GLAD_GL_NV_fragment_shader_interlock;
+     intel_fragment_shader_ordering = GLAD_GL_INTEL_fragment_shader_ordering;
+     blend_minmax_factor = GLAD_GL_AMD_blend_minmax_factor || GLAD_GL_NV_blend_minmax_factor;
++#ifdef __EMSCRIPTEN__
++    // WebGL2 exposes OpenGL ES 3.0.
++    is_suitable = GLAD_GL_ES_VERSION_3_0 || GLAD_GL_ES_VERSION_3_2 || GLAD_GL_VERSION_4_3;
++#else
+     is_suitable = GLAD_GL_VERSION_4_3 || GLAD_GL_ES_VERSION_3_2;
++#endif
+ }
+ 
+ void Driver::FindBugs() {
+diff --git a/src/video_core/renderer_opengl/gl_rasterizer.cpp b/src/video_core/renderer_opengl/gl_rasterizer.cpp
+index 4cc7777..144ca36 100644
+--- a/src/video_core/renderer_opengl/gl_rasterizer.cpp
++++ b/src/video_core/renderer_opengl/gl_rasterizer.cpp
+@@ -67,6 +67,11 @@ GLenum MakeAttributeType(Pica::PipelineRegs::VertexAttributeFormat format) {
+ [[nodiscard]] GLsizeiptr TextureBufferSize(const Driver& driver, bool is_lf) {
+     // Use the smallest texel size from the texel views
+     // which corresponds to GL_RG32F
++#ifdef __EMSCRIPTEN__
++    (void)driver;
++    (void)is_lf;
++    return static_cast<GLsizeiptr>(1024) * 64 * sizeof(Common::Vec2f);
++#endif
+     GLint max_texel_buffer_size;
+     glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &max_texel_buffer_size);
+     GLsizeiptr candidate = std::min<GLsizeiptr>(max_texel_buffer_size * 8ULL, TEXTURE_BUFFER_SIZE);
+@@ -90,8 +95,13 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+       vertex_buffer{driver, GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE},
+       uniform_buffer{driver, GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE},
+       index_buffer{driver, GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE},
++#ifdef __EMSCRIPTEN__
++      texture_buffer{driver, GL_ARRAY_BUFFER, TextureBufferSize(driver, false)},
++      texture_lf_buffer{driver, GL_ARRAY_BUFFER, TextureBufferSize(driver, true)} {
++#else
+       texture_buffer{driver, GL_TEXTURE_BUFFER, TextureBufferSize(driver, false)},
+       texture_lf_buffer{driver, GL_TEXTURE_BUFFER, TextureBufferSize(driver, true)} {
++#endif
+ 
+     // Clipping plane 0 is always enabled for PICA fixed clip plane z <= 0
+     state.clip_distance[0] = true;
+@@ -151,12 +161,26 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+     state.texture_buffer_lut_rg.texture_buffer = texture_buffer_lut_rg.handle;
+     state.texture_buffer_lut_rgba.texture_buffer = texture_buffer_lut_rgba.handle;
+     state.Apply();
++#ifdef __EMSCRIPTEN__
++    auto init_lut_2d = [](GLenum unit, GLenum internal_format, GLsizei width, GLsizei height) {
++        glActiveTexture(unit);
++        glTexStorage2D(GL_TEXTURE_2D, 1, internal_format, width, height);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
++        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
++    };
++    init_lut_2d(TextureUnits::TextureBufferLUT_LF.Enum(), GL_RG32F, 1024, 64);
++    init_lut_2d(TextureUnits::TextureBufferLUT_RG.Enum(), GL_RG32F, 1024, 64);
++    init_lut_2d(TextureUnits::TextureBufferLUT_RGBA.Enum(), GL_RGBA32F, 1024, 32);
++#else
+     glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
+     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_lf_buffer.GetHandle());
+     glActiveTexture(TextureUnits::TextureBufferLUT_RG.Enum());
+     glTexBuffer(GL_TEXTURE_BUFFER, GL_RG32F, texture_buffer.GetHandle());
+     glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
+     glTexBuffer(GL_TEXTURE_BUFFER, GL_RGBA32F, texture_buffer.GetHandle());
++#endif
+ 
+     // Bind index buffer for hardware shader path
+     state.draw.vertex_array = hw_vao.handle;
+@@ -165,9 +189,11 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+ 
+     glEnable(GL_BLEND);
+ 
++#ifndef __EMSCRIPTEN__
+     glEnable(GL_MULTISAMPLE);
+     glEnable(GL_SAMPLE_SHADING);
+     glMinSampleShading(1.0f);
++#endif
+ }
+ 
+ RasterizerOpenGL::~RasterizerOpenGL() = default;
+@@ -533,6 +559,28 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+             memory.GetPhysicalPointer(regs.pipeline.vertex_attributes.GetPhysicalBaseAddress() +
+                                       regs.pipeline.index_array.offset);
+         std::tie(buffer_ptr, buffer_offset, std::ignore) = index_buffer.Map(index_buffer_size, 4);
++#ifdef __EMSCRIPTEN__
++        const u32 min_idx = vertex_array_info.vs_input_index_min;
++        if (min_idx == 0) {
++            std::memcpy(buffer_ptr, index_data, index_buffer_size);
++        } else if (index_u16) {
++            const auto* src = reinterpret_cast<const u16*>(index_data);
++            auto* dst = reinterpret_cast<u16*>(buffer_ptr);
++            for (u32 i = 0; i < regs.pipeline.num_vertices; i++) {
++                dst[i] = static_cast<u16>(src[i] - min_idx);
++            }
++        } else {
++            for (u32 i = 0; i < regs.pipeline.num_vertices; i++) {
++                buffer_ptr[i] = static_cast<u8>(index_data[i] - min_idx);
++            }
++        }
++        index_buffer.Unmap(index_buffer_size);
++
++        glDrawRangeElements(primitive_mode, 0, vertex_array_info.vs_input_index_max - min_idx,
++                            regs.pipeline.num_vertices,
++                            index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
++                            reinterpret_cast<const void*>(buffer_offset));
++#else
+         std::memcpy(buffer_ptr, index_data, index_buffer_size);
+         index_buffer.Unmap(index_buffer_size);
+ 
+@@ -542,6 +590,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+                                       index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
+                                       reinterpret_cast<const void*>(buffer_offset),
+                                       -static_cast<GLint>(vertex_array_info.vs_input_index_min));
++#endif
+     } else {
+         glDrawArrays(primitive_mode, 0, regs.pipeline.num_vertices);
+     }
+@@ -931,9 +980,14 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
+     }
+ 
+     std::size_t bytes_used = 0;
++#ifdef __EMSCRIPTEN__
++    constexpr std::size_t row_bytes = 1024 * sizeof(Common::Vec2f);
++    const auto [buffer, offset, invalidate] = texture_lf_buffer.Map(max_size, row_bytes);
++#else
+     glBindBuffer(GL_TEXTURE_BUFFER, texture_lf_buffer.GetHandle());
+     const auto [buffer, offset, invalidate] =
+         texture_lf_buffer.Map(max_size, sizeof(Common::Vec4f));
++#endif
+ 
+     if (invalidate) {
+         pica.lighting.lut_dirty = pica.lighting.LutAllDirty;
+@@ -968,7 +1022,19 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
+         pica.fog.lut_dirty = false;
+     }
+ 
++#ifdef __EMSCRIPTEN__
++    if (bytes_used > 0) {
++        const GLint y = static_cast<GLint>(offset / row_bytes);
++        const GLsizei rows = static_cast<GLsizei>((bytes_used + row_bytes - 1) / row_bytes);
++        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++        glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
++        glBindTexture(GL_TEXTURE_2D, texture_buffer_lut_lf.handle);
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y, 1024, rows, GL_RG, GL_FLOAT, buffer);
++    }
++    texture_lf_buffer.Unmap(bytes_used);
++#else
+     texture_lf_buffer.Unmap(bytes_used);
++#endif
+ }
+ 
+ void RasterizerOpenGL::SyncAndUploadLUTs() {
+@@ -982,8 +1048,13 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
+     }
+ 
+     std::size_t bytes_used = 0;
++#ifdef __EMSCRIPTEN__
++    constexpr std::size_t row_bytes = 1024 * sizeof(Common::Vec4f);
++    const auto [buffer, offset, invalidate] = texture_buffer.Map(max_size, row_bytes);
++#else
+     glBindBuffer(GL_TEXTURE_BUFFER, texture_buffer.GetHandle());
+     const auto [buffer, offset, invalidate] = texture_buffer.Map(max_size, sizeof(Common::Vec4f));
++#endif
+ 
+     if (invalidate) {
+         pica.proctex.table_dirty = pica.proctex.TableAllDirty;
+@@ -1041,7 +1112,25 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
+ 
+     pica.proctex.table_dirty = 0;
+ 
++#ifdef __EMSCRIPTEN__
++    if (bytes_used > 0) {
++        const GLint y_rgba = static_cast<GLint>(offset / row_bytes);
++        const GLint y_rg = y_rgba * 2;
++        const GLsizei rows_rg = static_cast<GLsizei>(
++            (bytes_used + 1024 * sizeof(Common::Vec2f) - 1) / (1024 * sizeof(Common::Vec2f)));
++        const GLsizei rows_rgba = static_cast<GLsizei>((bytes_used + row_bytes - 1) / row_bytes);
++        glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
++        glActiveTexture(TextureUnits::TextureBufferLUT_RG.Enum());
++        glBindTexture(GL_TEXTURE_2D, texture_buffer_lut_rg.handle);
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y_rg, 1024, rows_rg, GL_RG, GL_FLOAT, buffer);
++        glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
++        glBindTexture(GL_TEXTURE_2D, texture_buffer_lut_rgba.handle);
++        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, y_rgba, 1024, rows_rgba, GL_RGBA, GL_FLOAT, buffer);
++    }
++    texture_buffer.Unmap(bytes_used);
++#else
+     texture_buffer.Unmap(bytes_used);
++#endif
+ }
+ 
+ void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
+diff --git a/src/video_core/renderer_opengl/gl_shader_manager.cpp b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+index 411b762..f084e19 100644
+--- a/src/video_core/renderer_opengl/gl_shader_manager.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+@@ -335,7 +335,12 @@ public:
+ 
+         // Enable the geometry-shader only if we are actually doing per-fragment lighting
+         // and care about proper quaternions. Otherwise just use standard vertex+fragment shaders.
++#ifdef __EMSCRIPTEN__
++        const bool use_geometry_shader = false;
++        (void)config;
++#else
+         const bool use_geometry_shader = !config.state.lighting_disable;
++#endif
+ 
+         res.use_clip_planes = profile.has_clip_planes;
+         res.use_geometry_shader = use_geometry_shader;
+@@ -396,9 +401,16 @@ void ShaderProgramManager::UseFixedGeometryShader(const Pica::RegsInternal& regs
+         .separable_shader = impl->separable,
+     };
+ 
++#ifdef __EMSCRIPTEN__
++    impl->current.gs = 0;
++    impl->current.gs_hash = 0;
++    (void)gs_config;
++    (void)extra;
++#else
+     auto [hash, handle, _] = impl->fixed_geometry_shaders.Get(gs_config, extra);
+     impl->current.gs = handle;
+     impl->current.gs_hash = hash;
++#endif
+ }
+ 
+ void ShaderProgramManager::UseTrivialGeometryShader() {
+diff --git a/src/video_core/renderer_opengl/gl_shader_util.cpp b/src/video_core/renderer_opengl/gl_shader_util.cpp
+index 8f02213..0137da3 100644
+--- a/src/video_core/renderer_opengl/gl_shader_util.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_util.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <array>
+ #include <string>
++#include <regex>
+ #include <vector>
+ #include <glad/glad.h>
+ #include "common/assert.h"
+@@ -14,6 +15,38 @@
+ namespace OpenGL {
+ 
+ GLuint LoadShader(std::string_view source, GLenum type, const std::string& debug_name) {
++#ifdef __EMSCRIPTEN__
++    if (type == GL_GEOMETRY_SHADER) {
++        return 0;
++    }
++    std::string preamble = "#version 300 es\n";
++    if (type == GL_VERTEX_SHADER) {
++        preamble += "#define fma(a, b, c) ((a) * (b) + (c))\n";
++    }
++    if (type == GL_FRAGMENT_SHADER) {
++        preamble += "precision highp float;\nprecision highp int;\n";
++    }
++    std::string adapted(source);
++    // Strip desktop/ES3.1+ constructs not valid in GLSL ES 3.00 (WebGL2).
++    adapted = std::regex_replace(adapted, std::regex(R"(#extension\s+GL_ARB_separate_shader_objects\s*:\s*enable\s*)"), "");
++    adapted = std::regex_replace(adapted, std::regex(R"(precision\s+(highp|mediump|lowp)\s+(samplerBuffer|uimage2D)\s*;)"), "");
++    adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*binding\s*=\s*\d+\s*,\s*std140\s*\))"), "layout(std140)");
++    adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*std140\s*,\s*binding\s*=\s*\d+\s*\))"), "layout(std140)");
++    adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*binding\s*=\s*\d+\s*\)\s*)"), "");
++    // Explicit uniform locations are ES 3.1+.
++    adapted = std::regex_replace(adapted, std::regex(R"(out\s+gl_PerVertex\s*\{[^}]*\}\s*;)"), "");
++    adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*location\s*=\s*[^)]+\)\s+(?=uniform\b))"), "");
++    // Inter-stage varying locations (VS out / FS in) are ES 3.1+.
++    if (type == GL_VERTEX_SHADER) {
++        adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*location\s*=\s*\d+\s*\)\s+(?=out\b))"), "");
++        if (adapted.find("out vec2 texcoord;") != std::string::npos) {
++            adapted = std::regex_replace(adapted, std::regex(R"(\btexcoord\b)"), "tex_coord");
++        }
++    } else if (type == GL_FRAGMENT_SHADER) {
++        adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*location\s*=\s*\d+\s*\)\s+(?=in\b))"), "");
++    }
++    source = adapted;
++#else
+     std::string preamble;
+     if (GLES) {
+         preamble = R"(#version 320 es
+@@ -29,6 +62,7 @@ GLuint LoadShader(std::string_view source, GLenum type, const std::string& debug
+     } else {
+         preamble = "#version 430 core\n";
+     }
++#endif
+ 
+     std::string_view debug_type;
+     switch (type) {
+@@ -96,11 +130,15 @@ GLuint LoadProgram(bool separable_program, std::span<const GLuint> shaders,
+         }
+     }
+ 
++#ifndef __EMSCRIPTEN__
+     if (separable_program) {
+         glProgramParameteri(program_id, GL_PROGRAM_SEPARABLE, GL_TRUE);
+     }
+ 
+     glProgramParameteri(program_id, GL_PROGRAM_BINARY_RETRIEVABLE_HINT, GL_TRUE);
++#else
++    (void)separable_program;
++#endif
+     glLinkProgram(program_id);
+ 
+     // Check the program
+@@ -122,6 +160,53 @@ GLuint LoadProgram(bool separable_program, std::span<const GLuint> shaders,
+         LOG_ERROR(Render_OpenGL, "Error linking shader {}: No log produced.", debug_name);
+     }
+ 
++#ifdef __EMSCRIPTEN__
++    if (result == GL_TRUE) {
++        // GLSL ES 3.00 has no layout(binding = N), so bind UBOs and samplers explicitly once.
++        static constexpr std::array<std::pair<const char*, GLuint>, 3> ubo_bindings{{
++            {"vs_pica_data", 0},
++            {"vs_data", 1},
++            {"fs_data", 2},
++        }};
++        for (const auto& [name, binding] : ubo_bindings) {
++            const GLuint idx = glGetUniformBlockIndex(program_id, name);
++            if (idx != GL_INVALID_INDEX) {
++                glUniformBlockBinding(program_id, idx, binding);
++            }
++        }
++        static constexpr std::array<std::pair<const char*, GLint>, 18> sampler_bindings{{
++            {"tex0", 0},
++            {"tex1", 1},
++            {"tex2", 2},
++            {"texture_buffer_lut_lf", 3},
++            {"texture_buffer_lut_rg", 4},
++            {"texture_buffer_lut_rgba", 5},
++            {"tex_normal", 6},
++            {"tex_color", 7},
++            {"color_texture", 0},
++            {"color_texture_r", 1},
++            {"depth", 0},
++            {"stencil", 1},
++            {"source", 0},
++            {"input_texture", 0},
++            {"tex", 0},
++            {"tex_input", 0},
++            {"HOOKED", 0},
++            {"LUMAD", 1},
++        }};
++        GLint prev_program = 0;
++        glGetIntegerv(GL_CURRENT_PROGRAM, &prev_program);
++        glUseProgram(program_id);
++        for (const auto& [name, unit] : sampler_bindings) {
++            const GLint loc = glGetUniformLocation(program_id, name);
++            if (loc != -1) {
++                glUniform1i(loc, unit);
++            }
++        }
++        glUseProgram(static_cast<GLuint>(prev_program));
++    }
++#endif
++
+     for (GLuint shader : shaders) {
+         if (shader != 0) {
+             glDetachShader(program_id, shader);
+diff --git a/src/video_core/renderer_opengl/gl_state.cpp b/src/video_core/renderer_opengl/gl_state.cpp
+index 4f41499..688765f 100644
+--- a/src/video_core/renderer_opengl/gl_state.cpp
++++ b/src/video_core/renderer_opengl/gl_state.cpp
+@@ -223,20 +223,32 @@ void OpenGLState::Apply() const {
+     // Texture buffer LUTs
+     if (texture_buffer_lut_lf.texture_buffer != cur_state.texture_buffer_lut_lf.texture_buffer) {
+         glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
++        #ifdef __EMSCRIPTEN__
++        glBindTexture(GL_TEXTURE_2D, texture_buffer_lut_lf.texture_buffer);
++#else
+         glBindTexture(GL_TEXTURE_BUFFER, texture_buffer_lut_lf.texture_buffer);
++#endif
+     }
+ 
+     // Texture buffer LUTs
+     if (texture_buffer_lut_rg.texture_buffer != cur_state.texture_buffer_lut_rg.texture_buffer) {
+         glActiveTexture(TextureUnits::TextureBufferLUT_RG.Enum());
++        #ifdef __EMSCRIPTEN__
++        glBindTexture(GL_TEXTURE_2D, texture_buffer_lut_rg.texture_buffer);
++#else
+         glBindTexture(GL_TEXTURE_BUFFER, texture_buffer_lut_rg.texture_buffer);
++#endif
+     }
+ 
+     // Texture buffer LUTs
+     if (texture_buffer_lut_rgba.texture_buffer !=
+         cur_state.texture_buffer_lut_rgba.texture_buffer) {
+         glActiveTexture(TextureUnits::TextureBufferLUT_RGBA.Enum());
++        #ifdef __EMSCRIPTEN__
++        glBindTexture(GL_TEXTURE_2D, texture_buffer_lut_rgba.texture_buffer);
++#else
+         glBindTexture(GL_TEXTURE_BUFFER, texture_buffer_lut_rgba.texture_buffer);
++#endif
+     }
+ 
+     // Color buffer
+@@ -245,6 +257,7 @@ void OpenGLState::Apply() const {
+         glBindTexture(GL_TEXTURE_2D, color_buffer.texture_2d);
+     }
+ 
++#ifndef __EMSCRIPTEN__
+     // Shadow Images
+     if (image_shadow_buffer != cur_state.image_shadow_buffer) {
+         glBindImageTexture(ImageUnits::ShadowBuffer, image_shadow_buffer, 0, GL_FALSE, 0,
+@@ -281,6 +294,7 @@ void OpenGLState::Apply() const {
+                            GL_READ_ONLY, GL_R32UI);
+     }
+ 
++#endif
+     // Framebuffer
+     if (draw.read_framebuffer != cur_state.draw.read_framebuffer) {
+         glBindFramebuffer(GL_READ_FRAMEBUFFER, draw.read_framebuffer);
+diff --git a/src/video_core/renderer_opengl/gl_stream_buffer.cpp b/src/video_core/renderer_opengl/gl_stream_buffer.cpp
+index aac24a4..56728a4 100644
+--- a/src/video_core/renderer_opengl/gl_stream_buffer.cpp
++++ b/src/video_core/renderer_opengl/gl_stream_buffer.cpp
+@@ -24,6 +24,14 @@ OGLStreamBuffer::OGLStreamBuffer(Driver& driver, GLenum target, GLsizeiptr size,
+         allocate_size *= 2;
+     }
+ 
++#ifdef __EMSCRIPTEN__
++    // WebGL2 has no glMapBufferRange/glBufferStorage: stage writes in CPU memory and upload via
++    // glBufferSubData on Unmap().
++    cpu_buffer.resize(static_cast<std::size_t>(allocate_size));
++    glBufferData(gl_target, allocate_size, nullptr, GL_STREAM_DRAW);
++    mapped_ptr = cpu_buffer.data();
++    (void)prefer_coherent;
++#else
+     if (GLAD_GL_ARB_buffer_storage) {
+         persistent = true;
+         coherent = prefer_coherent;
+@@ -35,6 +43,7 @@ OGLStreamBuffer::OGLStreamBuffer(Driver& driver, GLenum target, GLsizeiptr size,
+     } else {
+         glBufferData(gl_target, allocate_size, nullptr, GL_STREAM_DRAW);
+     }
++#endif
+ }
+ 
+ OGLStreamBuffer::~OGLStreamBuffer() {
+@@ -72,6 +81,12 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
+         }
+     }
+ 
++#ifdef __EMSCRIPTEN__
++    if (invalidate) {
++        glBufferData(gl_target, buffer_size, nullptr, GL_STREAM_DRAW);
++    }
++    return std::make_tuple(cpu_buffer.data() + buffer_pos, buffer_pos, invalidate);
++#else
+     if (invalidate || !persistent) {
+         MICROPROFILE_SCOPE(OpenGL_StreamBuffer);
+         GLbitfield flags = GL_MAP_WRITE_BIT | (persistent ? GL_MAP_PERSISTENT_BIT : 0) |
+@@ -83,11 +98,17 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
+     }
+ 
+     return std::make_tuple(mapped_ptr + buffer_pos - mapped_offset, buffer_pos, invalidate);
++#endif
+ }
+ 
+ void OGLStreamBuffer::Unmap(GLsizeiptr size) {
+     ASSERT(size <= mapped_size);
+-
++#ifdef __EMSCRIPTEN__
++    if (size > 0) {
++        glBufferSubData(gl_target, buffer_pos, size, cpu_buffer.data() + buffer_pos);
++    }
++    buffer_pos += size;
++#else
+     if (!coherent && size > 0) {
+         glFlushMappedBufferRange(gl_target, buffer_pos - mapped_offset, size);
+     }
+@@ -97,6 +118,7 @@ void OGLStreamBuffer::Unmap(GLsizeiptr size) {
+     }
+ 
+     buffer_pos += size;
++#endif
+ }
+ 
+ } // namespace OpenGL
+diff --git a/src/video_core/renderer_opengl/gl_stream_buffer.h b/src/video_core/renderer_opengl/gl_stream_buffer.h
+index 8b3e29f..b98f880 100644
+--- a/src/video_core/renderer_opengl/gl_stream_buffer.h
++++ b/src/video_core/renderer_opengl/gl_stream_buffer.h
+@@ -5,6 +5,7 @@
+ #pragma once
+ 
+ #include <tuple>
++#include <vector>
+ #include "video_core/renderer_opengl/gl_resource_manager.h"
+ 
+ namespace OpenGL {
+@@ -37,6 +38,9 @@ private:
+     GLenum gl_target;
+ 
+     bool coherent = false;
++#ifdef __EMSCRIPTEN__
++    std::vector<u8> cpu_buffer;
++#endif
+     bool persistent = false;
+ 
+     GLintptr buffer_pos = 0;
+diff --git a/src/video_core/renderer_opengl/gl_texture_runtime.cpp b/src/video_core/renderer_opengl/gl_texture_runtime.cpp
+index 5ccfe01..43e3a94 100644
+--- a/src/video_core/renderer_opengl/gl_texture_runtime.cpp
++++ b/src/video_core/renderer_opengl/gl_texture_runtime.cpp
+@@ -97,12 +97,15 @@ static constexpr std::array<FormatTuple, 8> CUSTOM_TUPLES = {{
+     OGLTexture texture{};
+     texture.Create();
+ 
++#ifndef __EMSCRIPTEN__
+     if (samples > 1) {
+         ASSERT(target == GL_TEXTURE_2D);
+         glBindTexture(GL_TEXTURE_2D_MULTISAMPLE, texture.handle);
+         glTexStorage2DMultisample(GL_TEXTURE_2D_MULTISAMPLE, samples, tuple.internal_format, width,
+                                   height, true);
+-    } else {
++    } else
++#endif
++    {
+         glBindTexture(target, texture.handle);
+         glTexStorage2D(target, levels, tuple.internal_format, width, height);
+     }
+@@ -111,9 +114,13 @@ static constexpr std::array<FormatTuple, 8> CUSTOM_TUPLES = {{
+     glTexParameteri(target, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+     glTexParameteri(target, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+ 
++#ifndef __EMSCRIPTEN__
+     if (!debug_name.empty()) {
+         glObjectLabel(GL_TEXTURE, texture.handle, debug_name.size(), debug_name.data());
+     }
++#else
++    (void)debug_name;
++#endif
+ 
+     return texture;
+ }
+@@ -314,12 +321,39 @@ bool TextureRuntime::CopyTextures(Surface& source, Surface& dest,
+     const GLenum dest_textarget =
+         dest.texture_type == VideoCore::TextureType::CubeMap ? GL_TEXTURE_CUBE_MAP : GL_TEXTURE_2D;
+ 
++#ifdef __EMSCRIPTEN__
++    const OpenGLState prev_state = OpenGLState::GetCurState();
++    const bool is_depth = source.type == VideoCore::SurfaceType::Depth ||
++                          source.type == VideoCore::SurfaceType::DepthStencil;
++    const GLenum att = source.type == VideoCore::SurfaceType::DepthStencil
++                           ? GL_DEPTH_STENCIL_ATTACHMENT
++                           : (source.type == VideoCore::SurfaceType::Depth ? GL_DEPTH_ATTACHMENT
++                                                                            : GL_COLOR_ATTACHMENT0);
++    const GLbitfield mask = source.type == VideoCore::SurfaceType::DepthStencil
++                                ? (GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT)
++                                : (is_depth ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT);
++    glBindFramebuffer(GL_READ_FRAMEBUFFER, read_fbos[0].handle);
++    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_fbos[0].handle);
++    for (const auto& copy : copies) {
++        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, att, src_textarget, source.Handle(),
++                               copy.src_level);
++        glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, att, dest_textarget, dest.Handle(),
++                               copy.dst_level);
++        glBlitFramebuffer(copy.src_offset.x, copy.src_offset.y,
++                          copy.src_offset.x + copy.extent.width,
++                          copy.src_offset.y + copy.extent.height, copy.dst_offset.x,
++                          copy.dst_offset.y, copy.dst_offset.x + copy.extent.width,
++                          copy.dst_offset.y + copy.extent.height, mask, GL_NEAREST);
++    }
++    prev_state.Apply();
++#else
+     for (const auto& copy : copies) {
+         glCopyImageSubData(source.Handle(), src_textarget, copy.src_level, copy.src_offset.x,
+                            copy.src_offset.y, copy.src_layer, dest.Handle(), dest_textarget,
+                            copy.dst_level, copy.dst_offset.x, copy.dst_offset.y, copy.dst_layer,
+                            copy.extent.width, copy.extent.height, 1);
+     }
++#endif
+     return true;
+ }
+ 
+@@ -447,12 +481,26 @@ GLuint Surface::CopyHandle() noexcept {
+                                   tuple, DebugName(true));
+     }
+ 
++#ifdef __EMSCRIPTEN__
++    const OpenGLState prev_state = OpenGLState::GetCurState();
++    OGLFramebuffer copy_fbo; copy_fbo.Create(); glBindFramebuffer(GL_READ_FRAMEBUFFER, copy_fbo.handle);
++    for (u32 level = 0; level < levels; level++) {
++        const u32 width = GetScaledWidth() >> level;
++        const u32 height = GetScaledHeight() >> level;
++        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
++                               Handle(1), level);
++        glBindTexture(GL_TEXTURE_2D, copy_texture.handle);
++        glCopyTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, 0, 0, width, height);
++    }
++    prev_state.Apply();
++#else
+     for (u32 level = 0; level < levels; level++) {
+         const u32 width = GetScaledWidth() >> level;
+         const u32 height = GetScaledHeight() >> level;
+         glCopyImageSubData(Handle(1), GL_TEXTURE_2D, level, 0, 0, 0, copy_texture.handle,
+                            GL_TEXTURE_2D, level, 0, 0, 0, width, height, 1);
+     }
++#endif
+ 
+     return copy_texture.handle;
+ }
+@@ -817,7 +865,9 @@ DebugScope::~DebugScope() {
+     if (!Settings::values.renderer_debug) {
+         return;
+     }
++#ifndef __EMSCRIPTEN__
+     glPopDebugGroup();
++#endif
+     global_scope_depth--;
+ }
+ 
 diff --git a/src/video_core/renderer_software/renderer_software.cpp b/src/video_core/renderer_software/renderer_software.cpp
 index 14aabca..d8d02b5 100644
 --- a/src/video_core/renderer_software/renderer_software.cpp
@@ -227,5 +999,92 @@ index 1e82f87..8d244c2 100644
      }
 +#endif
      sw_workers.WaitForRequests();
+ }
+ 
+diff --git a/src/video_core/shader/generator/glsl_fs_shader_gen.cpp b/src/video_core/shader/generator/glsl_fs_shader_gen.cpp
+index 972a248..b31a52d 100644
+--- a/src/video_core/shader/generator/glsl_fs_shader_gen.cpp
++++ b/src/video_core/shader/generator/glsl_fs_shader_gen.cpp
+@@ -42,13 +42,17 @@ static constexpr char fragment_shader_precision_OES[] = R"(
+ #ifdef GL_FRAGMENT_PRECISION_HIGH
+ precision highp int;
+ precision highp float;
++#if __VERSION__ >= 310
+ precision highp samplerBuffer;
+ precision highp uimage2D;
++#endif
+ #else
+ precision mediump int;
+ precision mediump float;
++#if __VERSION__ >= 310
+ precision mediump samplerBuffer;
+ precision mediump uimage2D;
++#endif
+ #endif // GL_FRAGMENT_PRECISION_HIGH
+ #endif
+ )";
+@@ -823,7 +827,7 @@ void FragmentModule::WriteFog() {
+     // Generate clamped fog factor from LUT for given fog index
+     out += "float fog_i = clamp(floor(fog_index), 0.0, 127.0);\n"
+            "float fog_f = fog_index - fog_i;\n"
+-           "vec2 fog_lut_entry = texelFetch(texture_buffer_lut_lf, int(fog_i) + "
++           "vec2 fog_lut_entry = FetchLut(texture_buffer_lut_lf, int(fog_i) + "
+            "fog_lut_offset).rg;\n"
+            "float fog_factor = fog_lut_entry.r + fog_lut_entry.g * fog_f;\n"
+            "fog_factor = clamp(fog_factor, 0.0, 1.0);\n";
+@@ -1053,7 +1057,7 @@ float ProcTexLookupLUT(int offset, float coord) {
+     float index_i = clamp(floor(coord), 0.0, 127.0);
+     float index_f = coord - index_i; // fract() cannot be used here because 128.0 needs to be
+                                      // extracted as index_i = 127.0 and index_f = 1.0
+-    vec2 entry = texelFetch(texture_buffer_lut_rg, int(index_i) + offset).rg;
++    vec2 entry = FetchLut(texture_buffer_lut_rg, int(index_i) + offset).rg;
+     return clamp(entry.r + entry.g * index_f, 0.0, 1.0);
+ }
+     )";
+@@ -1114,16 +1118,16 @@ float ProcTexNoiseCoef(vec2 x) {
+     case ProcTexFilter::LinearMipmapNearest:
+         out += "int lut_index_i = int(lut_coord) + lut_offset;\n";
+         out += "float lut_index_f = fract(lut_coord);\n";
+-        out += "return texelFetch(texture_buffer_lut_rgba, lut_index_i + "
++        out += "return FetchLut(texture_buffer_lut_rgba, lut_index_i + "
+                "proctex_lut_offset) + "
+                "lut_index_f * "
+-               "texelFetch(texture_buffer_lut_rgba, lut_index_i + proctex_diff_lut_offset);\n";
++               "FetchLut(texture_buffer_lut_rgba, lut_index_i + proctex_diff_lut_offset);\n";
+         break;
+     case ProcTexFilter::Nearest:
+     case ProcTexFilter::NearestMipmapLinear:
+     case ProcTexFilter::NearestMipmapNearest:
+         out += "lut_coord += float(lut_offset);\n";
+-        out += "return texelFetch(texture_buffer_lut_rgba, int(round(lut_coord)) + "
++        out += "return FetchLut(texture_buffer_lut_rgba, int(round(lut_coord)) + "
+                "proctex_lut_offset);\n";
+         break;
+     }
+@@ -1332,9 +1336,16 @@ void FragmentModule::DefineBindingsVK() {
+ void FragmentModule::DefineBindingsGL() {
+     // Uniform and texture buffers
+     out += FSUniformBlockDef;
++#ifdef __EMSCRIPTEN__
++    out += "uniform sampler2D texture_buffer_lut_lf;\n";
++    out += "uniform sampler2D texture_buffer_lut_rg;\n";
++    out += "uniform sampler2D texture_buffer_lut_rgba;\n";
++    out += "vec4 FetchLut(sampler2D lut, int idx) { return texelFetch(lut, ivec2(idx & 1023, idx >> 10), 0); }\n\n";
++#else
+     out += "layout(binding = 3) uniform samplerBuffer texture_buffer_lut_lf;\n";
+     out += "layout(binding = 4) uniform samplerBuffer texture_buffer_lut_rg;\n";
+-    out += "layout(binding = 5) uniform samplerBuffer texture_buffer_lut_rgba;\n\n";
++    out += "layout(binding = 5) uniform samplerBuffer texture_buffer_lut_rgba;\n#define FetchLut texelFetch\n\n";
++#endif
+ 
+     // Texture samplers
+     const auto texture_type = config.texture.texture0_type.Value();
+@@ -1406,7 +1417,7 @@ void FragmentModule::DefineLightingHelpers() {
+ 
+     out += R"(
+ float LookupLightingLUT(int lut_index, int index, float delta) {
+-    vec2 entry = texelFetch(texture_buffer_lut_lf, lighting_lut_offset[lut_index >> 2][lut_index & 3] + index).rg;
++    vec2 entry = FetchLut(texture_buffer_lut_lf, lighting_lut_offset[lut_index >> 2][lut_index & 3] + index).rg;
+     return entry.r + entry.g * delta;
  }
  

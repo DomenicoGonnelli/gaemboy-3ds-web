@@ -17,6 +17,7 @@
 
 #include <sys/stat.h>
 #include <emscripten/emscripten.h>
+#include <emscripten/html5.h>
 
 #include "common/file_util.h"
 #include "libretro.h"
@@ -58,6 +59,7 @@ struct SharedState {
 };
 
 SharedState g_state{};
+retro_hw_render_callback g_hw_render{};
 std::vector<uint32_t> g_fb(kMaxFbPixels);
 std::vector<int16_t> g_audio_ring(kAudioRingFrames * 2);
 std::unordered_map<std::string, std::string> g_vars;
@@ -112,6 +114,17 @@ bool EnvironmentCb(unsigned cmd, void* data) {
     case RETRO_ENVIRONMENT_GET_CORE_OPTIONS_VERSION:
         *static_cast<unsigned*>(data) = 0;
         return true;
+    case RETRO_ENVIRONMENT_GET_PREFERRED_HW_RENDER:
+        *static_cast<retro_hw_context_type*>(data) = RETRO_HW_CONTEXT_OPENGLES3;
+        return true;
+    case RETRO_ENVIRONMENT_SET_HW_RENDER: {
+        g_hw_render = *static_cast<retro_hw_render_callback*>(data);
+        g_hw_render.get_proc_address =
+            reinterpret_cast<retro_hw_get_proc_address_t>(emscripten_webgl_get_proc_address);
+        g_hw_render.get_current_framebuffer = []() -> uintptr_t { return 0; };
+        *static_cast<retro_hw_render_callback*>(data) = g_hw_render;
+        return true;
+    }
     case RETRO_ENVIRONMENT_SET_VARIABLES:
     case RETRO_ENVIRONMENT_SET_CONTROLLER_INFO:
     case RETRO_ENVIRONMENT_SET_INPUT_DESCRIPTORS:
@@ -126,6 +139,12 @@ bool EnvironmentCb(unsigned cmd, void* data) {
 }
 
 void VideoRefreshCb(const void* data, unsigned width, unsigned height, size_t pitch) {
+    if (data == RETRO_HW_FRAME_BUFFER_VALID) {
+        g_state.fb_width = static_cast<int32_t>(width);
+        g_state.fb_height = static_cast<int32_t>(height);
+        g_state.frame_seq.fetch_add(1, std::memory_order_release);
+        return;
+    }
     if (!data || width == 0 || height == 0 || width * height > kMaxFbPixels) {
         return;
     }
@@ -207,12 +226,50 @@ int16_t InputStateCb(unsigned port, unsigned device, unsigned index, unsigned id
     }
 }
 
-void DefaultOptions() {
-    g_vars["citra_graphics_api"] = "Software"; // WebGL2 renderer is the next milestone
+void DefaultOptions(bool use_sw) {
+    g_vars["citra_graphics_api"] = use_sw ? "Software" : "OpenGL";
+    g_vars["citra_use_hw_shader"] = "enabled";
+    g_vars["citra_use_shader_jit"] = "disabled";
     g_vars["citra_use_cpu_jit"] = "disabled";  // no Dynarmic on wasm32
     g_vars["citra_use_fastinterp"] = "enabled";
     g_vars["citra_layout_option"] = "default"; // top screen above bottom screen
     g_vars["citra_analog_function"] = "c_stick"; // right stick = C-stick only (touch = pointer)
+}
+
+using clock_t_gb = std::chrono::steady_clock;
+constexpr auto kFrameDur = std::chrono::nanoseconds(16'715'000);
+clock_t_gb::time_point g_next_deadline;
+clock_t_gb::time_point g_fps_window_start;
+int g_fps_window_frames = 0;
+
+void StepFrame() {
+    const auto now = clock_t_gb::now();
+    if (g_state.throttle && now + std::chrono::milliseconds(2) < g_next_deadline) {
+        return; // e.g. 120 Hz display: skip every other rAF to pace ~60 fps
+    }
+    const auto t0 = now;
+    retro_run();
+    const auto t1 = clock_t_gb::now();
+    const float ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
+    g_state.last_frame_ms = ms;
+    g_state.avg_frame_ms =
+        g_state.frames_total == 0 ? ms : g_state.avg_frame_ms * 0.95f + ms * 0.05f;
+    g_state.frames_total++;
+    g_fps_window_frames++;
+    const float window_s = std::chrono::duration<float>(t1 - g_fps_window_start).count();
+    if (window_s >= 1.0f) {
+        g_state.emu_fps = g_fps_window_frames / window_s;
+        g_fps_window_frames = 0;
+        g_fps_window_start = t1;
+    }
+    if (g_state.throttle) {
+        g_next_deadline += kFrameDur;
+        if (g_next_deadline < t1) {
+            g_next_deadline = t1;
+        }
+    } else {
+        g_next_deadline = t1;
+    }
 }
 
 // Diagnostic for large game files: reads 16-byte ASCII markers ("@" + offset in hex) written at
@@ -280,8 +337,14 @@ int main(int argc, char** argv) {
          {"/gaemboy", "/gaemboy/3ds", "/gaemboy/3ds/system", "/gaemboy/3ds/saves"}) {
         mkdir(dir, 0755);
     }
-    DefaultOptions();
-    if (argc > 2 && std::strcmp(argv[2], "--io-selftest") == 0) {
+    bool use_sw = false;
+    bool io_selftest = false;
+    for (int i = 2; i < argc; i++) {
+        if (std::strcmp(argv[i], "--sw") == 0) use_sw = true;
+        if (std::strcmp(argv[i], "--io-selftest") == 0) io_selftest = true;
+    }
+    DefaultOptions(use_sw);
+    if (io_selftest) {
         return RunIoSelfTest(rom);
     }
 
@@ -297,7 +360,6 @@ int main(int argc, char** argv) {
     info.path = rom;
     const auto load_start = std::chrono::steady_clock::now();
     if (!retro_load_game(&info)) {
-        // Keep the core's own reason (encrypted ROM, unsupported format, ...) visible.
         char reason[sizeof(g_state.message)];
         std::snprintf(reason, sizeof(reason), "Caricamento fallito: %s",
                       g_state.message_seq > 0 ? g_state.message : "formato non riconosciuto");
@@ -305,41 +367,37 @@ int main(int argc, char** argv) {
         SetMessage(reason);
         return 1;
     }
+    if (!use_sw && g_hw_render.context_reset != nullptr) {
+        EmscriptenWebGLContextAttributes attrs;
+        emscripten_webgl_init_context_attributes(&attrs);
+        attrs.majorVersion = 2;
+        attrs.minorVersion = 0;
+        attrs.alpha = false;
+        attrs.depth = true;
+        attrs.stencil = true;
+        attrs.antialias = false;
+        attrs.preserveDrawingBuffer = false;
+        EM_ASM({
+            if (typeof specialHTMLTargets !== 'undefined' && Module['canvas']) {
+                specialHTMLTargets['#canvas'] = Module['canvas'];
+            }
+        });
+        EMSCRIPTEN_WEBGL_CONTEXT_HANDLE ctx = emscripten_webgl_create_context("#canvas", &attrs);
+        if (ctx <= 0) {
+            g_state.status = 3;
+            SetMessage("Impossibile creare il contesto WebGL2 sull'OffscreenCanvas");
+            return 1;
+        }
+        emscripten_webgl_make_context_current(ctx);
+        g_hw_render.context_reset();
+    }
     g_state.load_ms =
         std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - load_start)
             .count();
     g_state.status = 2;
 
-    using clock = std::chrono::steady_clock;
-    constexpr auto kFrame = std::chrono::nanoseconds(16'715'000); // 3DS refresh ~59.83 Hz
-    auto next_deadline = clock::now();
-    auto fps_window_start = clock::now();
-    int fps_window_frames = 0;
-    for (;;) {
-        const auto t0 = clock::now();
-        retro_run();
-        const auto t1 = clock::now();
-        const float ms = std::chrono::duration<float, std::milli>(t1 - t0).count();
-        g_state.last_frame_ms = ms;
-        g_state.avg_frame_ms =
-            g_state.frames_total == 0 ? ms : g_state.avg_frame_ms * 0.95f + ms * 0.05f;
-        g_state.frames_total++;
-        fps_window_frames++;
-        const float window_s = std::chrono::duration<float>(t1 - fps_window_start).count();
-        if (window_s >= 1.0f) {
-            g_state.emu_fps = fps_window_frames / window_s;
-            fps_window_frames = 0;
-            fps_window_start = t1;
-        }
-        if (g_state.throttle) {
-            next_deadline += kFrame;
-            if (next_deadline < t1) {
-                next_deadline = t1; // slower than real time: don't try to catch up
-            } else {
-                std::this_thread::sleep_until(next_deadline);
-            }
-        } else {
-            next_deadline = t1;
-        }
-    }
+    g_next_deadline = clock_t_gb::now();
+    g_fps_window_start = g_next_deadline;
+    emscripten_set_main_loop(StepFrame, 60, false);
+    return 0;
 }
