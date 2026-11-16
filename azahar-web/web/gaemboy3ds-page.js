@@ -123,7 +123,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=4', { type: 'module' });
   worker.onmessage = ({ data }) => {
     switch (data.type) {
       case 'logs':
@@ -249,6 +249,7 @@ function updateStats() {
   const speed = (100 * fps) / NATIVE_FPS;
   const buffered = (readI('audioWrite') - readI('audioRead')) >>> 0;
   $('s-status').textContent = STATUS[status] ?? status;
+  $('s-renderer').textContent = ctx ? 'Software (CPU)' : 'WebGL2 (GPU)';
   $('s-status').className = status === 2 ? 'good' : status === 3 ? 'bad' : 'mid';
   $('s-load').textContent = readF('loadMs') ? `${readF('loadMs').toFixed(0)} ms` : '—';
   $('s-frames').textContent = frames;
