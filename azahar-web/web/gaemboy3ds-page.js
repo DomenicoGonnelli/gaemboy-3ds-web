@@ -43,6 +43,7 @@ const readF = (k) => f32()[(base + OFF[k]) >> 2];
 
 async function boot(name, bytes) {
   $('demo').disabled = true;
+  $('demo3d').disabled = true;
   document.querySelector('label.btn').style.display = 'none';
   log(`Carico ${name} (${(bytes.length / 1048576).toFixed(1)} MB)…`);
   const romPath = `/rom/${name.replace(/[^\w.-]/g, '_')}`;
@@ -116,14 +117,15 @@ function updateStats() {
   bench.frames.push({ t: elapsed, frames, fps, avgMs, audioSeconds: audio / AUDIO_HZ, status });
 }
 
-$('demo').onclick = async () => {
-  const res = await fetch('./homebrew/SuperHaxagon.3dsx');
+async function startDemo(file) {
+  const res = await fetch(`./homebrew/${file}`);
   if (!res.ok) {
-    log(`Demo non trovata (${res.status}): usa "Carica" con un tuo homebrew.`);
+    log(`Demo ${file} non trovata (${res.status}): usa "Carica" con un tuo homebrew.`);
     return;
   }
-  boot('SuperHaxagon.3dsx', new Uint8Array(await res.arrayBuffer()));
-};
+  boot(file, new Uint8Array(await res.arrayBuffer()));
+}
+for (const id of ['demo', 'demo3d']) $(id).onclick = () => startDemo($(id).dataset.file);
 $('file').onchange = async (e) => {
   const file = e.target.files[0];
   if (file) boot(file.name, new Uint8Array(await file.arrayBuffer()));
@@ -139,11 +141,26 @@ const setButton = (id, down) => {
   buttons = down ? buttons | (1 << id) : buttons & ~(1 << id);
   if (mod) writeI('buttons', buttons);
 };
+// Circle pad on I/J/K/L (libretro analog: Y grows downwards).
+const STICK = { KeyJ: ['analogLX', -1], KeyL: ['analogLX', 1], KeyI: ['analogLY', -1], KeyK: ['analogLY', 1] };
+const stickHeld = new Set();
+function updateStick() {
+  if (!mod) return;
+  let lx = 0, ly = 0;
+  for (const code of stickHeld) {
+    const [axis, dir] = STICK[code];
+    if (axis === 'analogLX') lx += dir; else ly += dir;
+  }
+  writeI('analogLX', Math.max(-1, Math.min(1, lx)) * 0x7fff);
+  writeI('analogLY', Math.max(-1, Math.min(1, ly)) * 0x7fff);
+}
 addEventListener('keydown', (e) => {
   if (e.code in KEYMAP) { setButton(KEYMAP[e.code], true); e.preventDefault(); }
+  if (e.code in STICK) { stickHeld.add(e.code); updateStick(); e.preventDefault(); }
 });
 addEventListener('keyup', (e) => {
   if (e.code in KEYMAP) { setButton(KEYMAP[e.code], false); e.preventDefault(); }
+  if (e.code in STICK) { stickHeld.delete(e.code); updateStick(); e.preventDefault(); }
 });
 
 // libretro pointer space is [-0x7fff, 0x7fff] over the whole output frame; the core maps it onto
@@ -161,4 +178,5 @@ canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.point
 canvas.addEventListener('pointermove', (e) => pointer(e));
 canvas.addEventListener('pointerup', (e) => pointer(e, false));
 
-if (new URLSearchParams(location.search).has('demo')) $('demo').click();
+const demoParam = new URLSearchParams(location.search).get('demo');
+if (demoParam !== null) (demoParam === '3d' ? $('demo3d') : $('demo')).click();

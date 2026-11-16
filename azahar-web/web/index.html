@@ -30,7 +30,8 @@
 <p class="sub">Emulatore 3DS Azahar compilato con Emscripten: CPU FastInterp, renderer software, kernel e servizi HLE, in un thread dedicato.
   Il software viene eseguito localmente nel browser.</p>
 <div>
-  <button id="demo">Avvia demo (Super Haxagon, GPL)</button>
+  <button id="demo" data-file="SuperHaxagon.3dsx">Demo 2D: Super Haxagon (GPL)</button>
+  <button id="demo3d" data-file="craftus_reloaded.3dsx">Demo 3D: Craftus Reloaded (MIT)</button>
   <label class="btn" for="file">Carica .3dsx / .3ds / .cxi…</label><input id="file" type="file" accept=".3dsx,.3ds,.cci,.cxi,.app,.elf,.axf">
   <button id="throttle" disabled>Velocità: 60 fps</button>
 </div>
@@ -47,7 +48,7 @@
       <tr><td>Audio prodotto</td><td id="s-audio">—</td></tr>
       <tr><td>Thread / memoria</td><td id="s-mem">—</td></tr>
     </table>
-    <div class="keys">Tastiera: frecce = D-pad · X = A · Z = B · S = X · A = Y · Q/W = L/R · Invio = Start · Backspace = Select<br>
+    <div class="keys">Tastiera: frecce = D-pad · I/J/K/L = Circle Pad · X = A · Z = B · S = X · A = Y · Q/W = L/R · Invio = Start · Backspace = Select<br>
       Mouse/touch sullo schermo inferiore = touchscreen</div>
   </div>
 </div>

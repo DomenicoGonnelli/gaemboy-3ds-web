@@ -1,0 +1,18 @@
+{
+ "title": "Craftus Reloaded 0.3 (MIT), Smea world, Chromium headless --no-liftoff, Apple M2 Pro",
+ "fps": [14.8, 16.4],
+ "frame_ms": 61.5,
+ "emulation_thread_share_of_frame_pct": {
+  "software_rasterizer_pixels": 37.2,
+  "waiting_for_rasterizer_workers": 37.0,
+  "thread_sync": 6.9,
+  "pica_shader_interpreter": 5.8,
+  "frame_presentation": 3.4,
+  "pica_gpu_commands": 2.6,
+  "cpu_arm11_fastinterp": 2.1,
+  "malloc_free": 1.4,
+  "kernel_hle_services": 0.2,
+  "other": 3.4
+ },
+ "other_threads": "12 rasterizer workers, ~6% busy each"
+}

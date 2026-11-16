@@ -16,7 +16,8 @@
 | Rendering | **Corretto**, dopo aver aggiunto ad Azahar il supporto alla *wide mode* 800 px, che mancava in tutti i renderer di Azahar (il gioco stesso lo dichiara nei sorgenti). |
 | Input | **Funziona**: tastiera → pulsanti 3DS (navigazione nei menu e cambio livello verificati); il touch passa dal puntatore libretro. |
 | Velocità (M2 Pro) | Titolo **~54 fps (90%)**, menu di gioco **~41 fps (69%)**. Identica in Chrome e WebKit. |
-| Dove va il tempo | CPU emulata (FastInterp) **<3%**. **Renderer software PICA200 ≈ 80–90%**: su un thread solo farebbe 12 fps, ed è usabile solo distribuito su ~12 thread. |
+| Test 3D (senza audio) | *Craftus Reloaded* 0.3 (MIT, citro3d, nessun audio): menu touch, creazione del mondo, **mondo 3D a blocchi renderizzato correttamente**, camminata, rotazione col Circle Pad e cambio blocco funzionano. **~16 fps (27%)**, 61 ms per frame. |
+| Dove va il tempo | CPU emulata (FastInterp) **2–3%**. **Renderer software PICA200 ≈ 80%** sia in 2D sia in 3D: su un thread solo Super Haxagon farebbe 12 fps. Nel mondo 3D di Craftus: rasterizzazione 37% + attesa dei worker 37% + sincronizzazione 7%, shader PICA 6%. |
 | Audio | Non verificato: gli homebrew libctru avviano l'audio solo con `sdmc:/3ds/dspfirm.cdc` (firmware DSP Nintendo, non distribuibile). |
 | Verdetto | **Architettura validata** (core, thread, FS, input, frame). **Il prossimo collo di bottiglia è la GPU**: per i giochi 3D commerciali serve il renderer hardware WebGL2. Il renderer software basta solo per homebrew 2D su desktop potenti. |
 
@@ -230,6 +231,39 @@ Controprova: con la rasterizzazione **tutta su un thread** il gioco scende a **1
 (menu), con l'80% del tempo nella pipeline pixel (`ProcessTriangle`, TEV, blending). Il renderer software regge
 solo grazie a ~12 thread, mentre la CPU emulata è quasi irrilevante per questo homebrew.
 
+### Test 3D: Craftus Reloaded (senza audio)
+
+*Craftus Reloaded* 0.3 (RSDuck, MIT; texture di XSSheep, CC BY-SA) è un clone di Minecraft in **citro3d**: mondo
+3D a blocchi, texture, vertex shader PICA, 3D stereoscopico attivo (`gfxSet3D(true)`), menu touch. **Non usa
+l'audio** (niente `ndsp`), quindi il test non dipende dal firmware DSP.
+
+| Passo | Esito |
+|---|---|
+| Boot e menu "World select" (touch sullo schermo inferiore) | OK, ~33 fps |
+| Tap su "New World" → tipo "Smea" → "Continue" (tastiera software HLE confermata in automatico) | OK |
+| Generazione e rendering del mondo 3D (colline, erba, terra, cielo, braccio, mirino, inventario) | **OK, rendering corretto** |
+| Avanti (X), rotazione (Circle Pad), sguardo in basso + R, cambio blocco (D-pad →) | OK (vedi `results/craftus-gameplay-chromium.png`) |
+| Velocità | **~16 fps (27%)**, 61 ms per frame |
+
+Profilo del thread di emulazione nel mondo 3D (`results/craftus-3d-profile-m2pro.json`):
+
+| Componente | Quota del frame |
+|---|---|
+| Rasterizzatore software (pixel, TEV, blending) | 37% |
+| Attesa dei worker di rasterizzazione | 37% |
+| Sincronizzazione thread | 7% |
+| Interprete shader PICA (vertex) | 6% |
+| Presentazione frame | 3% |
+| Comandi GPU PICA | 3% |
+| **CPU ARM11 (FastInterp)** | **2%** |
+| Kernel e servizi HLE | 0,2% |
+
+Lettura: anche in 3D circa l'**80% del frame è rasterizzazione software**. Gli altri 12 worker sono occupati solo
+al ~6%, perché in un mondo a blocchi i triangoli sono piccoli e il thread principale li rasterizza da solo.
+Togliendo la rasterizzazione restano ~19% di 61 ms ≈ **12 ms per frame**, sotto il budget di 16,7 ms.
+*Stima*: un renderer WebGL2 aggiungerebbe il suo overhead (comandi GL, upload delle texture), ma sposta
+rasterizzazione e shader sulla GPU, ed è l'unica leva che può portare un gioco 3D a 60 fps.
+
 ### Problemi trovati e risolti
 
 1. **Wide mode 800 px non supportata da Azahar.** Il sorgente di Super Haxagon disattiva il wide mode solo se il
@@ -258,11 +292,13 @@ solo grazie a ~12 thread, mentre la CPU emulata è quasi irrilevante per questo 
 azahar-web/scripts/fetch-azahar-full.sh       # Azahar @11eceda + submodule necessari + patch (~210 MB)
 azahar-web/scripts/build.sh                   # Emscripten → azahar-web/dist/ (~7 min la prima volta)
 mkdir -p test-homebrew && curl -L https://github.com/RedTopper/Super-Haxagon/releases/download/3.9.1/SuperHaxagon-3DS-armhf.3dsx.zip -o /tmp/h.zip && unzip -o /tmp/h.zip -d test-homebrew
+curl -L -o test-homebrew/craftus_reloaded.3dsx https://github.com/RSDuck/craftus_reloaded/releases/download/0.3/craftus_reloaded.3dsx
 python3 azahar-web/scripts/serve.py           # http://localhost:8766/ (header COOP/COEP inclusi)
 ```
 
-Apri `http://localhost:8766/`, poi "Avvia demo" oppure "Carica…" con un tuo `.3dsx`/`.3ds`.
-Tastiera: frecce = D-pad, X = A, Z = B, Invio = Start. Per profilare: `PROFILE=1 azahar-web/scripts/build.sh`.
+Apri `http://localhost:8766/`, poi "Demo 2D" o "Demo 3D", oppure "Carica…" con un tuo `.3dsx`/`.3ds`.
+Tastiera: frecce = D-pad, I/J/K/L = Circle Pad, X = A, Z = B, S = X, A = Y, Q/W = L/R, Invio = Start.
+In Craftus: S avanti, I/J/K/L per guardarsi intorno, W rompe un blocco, Q lo piazza. Per profilare: `PROFILE=1 azahar-web/scripts/build.sh`.
 
 ## Correzioni allo studio di fattibilità
 
