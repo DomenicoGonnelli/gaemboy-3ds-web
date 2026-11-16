@@ -398,6 +398,6 @@ int main(int argc, char** argv) {
 
     g_next_deadline = clock_t_gb::now();
     g_fps_window_start = g_next_deadline;
-    emscripten_set_main_loop(StepFrame, 60, false);
+    emscripten_set_main_loop(StepFrame, 0, false);
     return 0;
 }

@@ -550,18 +550,10 @@ index 411b762..f084e19 100644
  
  void ShaderProgramManager::UseTrivialGeometryShader() {
 diff --git a/src/video_core/renderer_opengl/gl_shader_util.cpp b/src/video_core/renderer_opengl/gl_shader_util.cpp
-index 8f02213..a2632e8 100644
+index 8f02213..084c63a 100644
 --- a/src/video_core/renderer_opengl/gl_shader_util.cpp
 +++ b/src/video_core/renderer_opengl/gl_shader_util.cpp
-@@ -4,6 +4,7 @@
- 
- #include <array>
- #include <string>
-+#include <regex>
- #include <vector>
- #include <glad/glad.h>
- #include "common/assert.h"
-@@ -14,6 +15,35 @@
+@@ -14,6 +14,86 @@
  namespace OpenGL {
  
  GLuint LoadShader(std::string_view source, GLenum type, const std::string& debug_name) {
@@ -573,31 +565,82 @@ index 8f02213..a2632e8 100644
 +    if (type == GL_FRAGMENT_SHADER) {
 +        preamble += "precision highp float;\nprecision highp int;\n";
 +    }
-+    std::string adapted(source);
-+    // Strip desktop/ES3.1+ constructs not valid in GLSL ES 3.00 (WebGL2).
-+    adapted = std::regex_replace(adapted, std::regex(R"(#extension\s+GL_ARB_separate_shader_objects\s*:\s*enable\s*)"), "");
-+    adapted = std::regex_replace(adapted, std::regex(R"(precision\s+(highp|mediump|lowp)\s+(samplerBuffer|uimage2D)\s*;)"), "");
-+    adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*binding\s*=\s*\d+\s*,\s*std140\s*\))"), "layout(std140)");
-+    adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*std140\s*,\s*binding\s*=\s*\d+\s*\))"), "layout(std140)");
-+    adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*binding\s*=\s*\d+\s*\)\s*)"), "");
-+    // Explicit uniform locations are ES 3.1+.
-+    adapted = std::regex_replace(adapted, std::regex(R"(out\s+gl_PerVertex\s*\{[^}]*\}\s*;)"), "");
-+    adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*location\s*=\s*[^)]+\)\s+(?=uniform\b))"), "");
-+    // Inter-stage varying locations (VS out / FS in) are ES 3.1+.
-+    if (type == GL_VERTEX_SHADER) {
-+        adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*location\s*=\s*\d+\s*\)\s+(?=out\b))"), "");
-+        if (adapted.find("out vec2 texcoord;") != std::string::npos) {
-+            adapted = std::regex_replace(adapted, std::regex(R"(\btexcoord\b)"), "tex_coord");
++    // Fast single-pass GLSL 320/430 -> GLSL ES 3.00 rewrite (avoids slow std::regex).
++    std::string adapted;
++    adapted.reserve(source.size());
++    auto erase_block = [](std::string& str, std::string_view marker) {
++        std::size_t pos = 0;
++        while ((pos = str.find(marker, pos)) != std::string::npos) {
++            std::size_t end = str.find('}', pos);
++            if (end == std::string::npos) break;
++            end = str.find(';', end);
++            str.erase(pos, end == std::string::npos ? str.size() - pos : end - pos + 1);
 +        }
-+    } else if (type == GL_FRAGMENT_SHADER) {
-+        adapted = std::regex_replace(adapted, std::regex(R"(layout\s*\(\s*location\s*=\s*\d+\s*\)\s+(?=in\b))"), "");
++    };
++    auto replace_all = [](std::string& str, std::string_view from, std::string_view to) {
++        std::size_t pos = 0;
++        while ((pos = str.find(from, pos)) != std::string::npos) {
++            str.replace(pos, from.size(), to);
++            pos += to.size();
++        }
++    };
++    adapted.assign(source);
++    replace_all(adapted, "#extension GL_ARB_separate_shader_objects : enable\n", "");
++    replace_all(adapted, "#extension GL_ARB_separate_shader_objects : enable", "");
++    replace_all(adapted, "precision highp samplerBuffer;", "");
++    replace_all(adapted, "precision mediump samplerBuffer;", "");
++    replace_all(adapted, "precision lowp samplerBuffer;", "");
++    replace_all(adapted, "precision highp uimage2D;", "");
++    replace_all(adapted, "precision mediump uimage2D;", "");
++    replace_all(adapted, "precision lowp uimage2D;", "");
++    erase_block(adapted, "out gl_PerVertex");
++    // Strip `layout(...)` qualifiers that are invalid in GLSL ES 3.00:
++    // - `binding = N` on samplers/UBOs
++    // - `location = N` on `uniform`, VS `out`, FS `in`
++    std::size_t pos = 0;
++    while ((pos = adapted.find("layout", pos)) != std::string::npos) {
++        std::size_t lp = pos + 6;
++        while (lp < adapted.size() && (adapted[lp] == ' ' || adapted[lp] == '\t')) lp++;
++        if (lp >= adapted.size() || adapted[lp] != '(') { pos += 6; continue; }
++        std::size_t rp = adapted.find(')', lp);
++        if (rp == std::string::npos) break;
++        std::string inner = adapted.substr(lp + 1, rp - lp - 1);
++        const bool has_binding = inner.find("binding") != std::string::npos;
++        const bool has_std140 = inner.find("std140") != std::string::npos;
++        const bool has_location = inner.find("location") != std::string::npos;
++        if (has_binding && has_std140) {
++            adapted.replace(pos, rp - pos + 1, "layout(std140)");
++            pos += 14;
++            continue;
++        }
++        if (has_binding && !has_location) {
++            std::size_t end = rp + 1;
++            while (end < adapted.size() && (adapted[end] == ' ' || adapted[end] == '\t')) end++;
++            adapted.erase(pos, end - pos);
++            continue;
++        }
++        if (has_location) {
++            std::size_t after = rp + 1;
++            while (after < adapted.size() && (adapted[after] == ' ' || adapted[after] == '\t')) after++;
++            const bool is_uniform = adapted.compare(after, 7, "uniform") == 0;
++            const bool is_vs_out = type == GL_VERTEX_SHADER && adapted.compare(after, 3, "out") == 0;
++            const bool is_fs_in = type == GL_FRAGMENT_SHADER && adapted.compare(after, 2, "in") == 0;
++            if (is_uniform || is_vs_out || is_fs_in) {
++                adapted.erase(pos, after - pos);
++                continue;
++            }
++        }
++        pos = rp + 1;
++    }
++    if (type == GL_VERTEX_SHADER && adapted.find("out vec2 texcoord;") != std::string::npos) {
++        replace_all(adapted, "texcoord", "tex_coord");
 +    }
 +    source = adapted;
 +#else
      std::string preamble;
      if (GLES) {
          preamble = R"(#version 320 es
-@@ -29,6 +59,7 @@ GLuint LoadShader(std::string_view source, GLenum type, const std::string& debug
+@@ -29,6 +109,7 @@ GLuint LoadShader(std::string_view source, GLenum type, const std::string& debug
      } else {
          preamble = "#version 430 core\n";
      }
@@ -605,7 +648,7 @@ index 8f02213..a2632e8 100644
  
      std::string_view debug_type;
      switch (type) {
-@@ -96,11 +127,15 @@ GLuint LoadProgram(bool separable_program, std::span<const GLuint> shaders,
+@@ -96,11 +177,15 @@ GLuint LoadProgram(bool separable_program, std::span<const GLuint> shaders,
          }
      }
  
@@ -621,7 +664,7 @@ index 8f02213..a2632e8 100644
      glLinkProgram(program_id);
  
      // Check the program
-@@ -122,6 +157,53 @@ GLuint LoadProgram(bool separable_program, std::span<const GLuint> shaders,
+@@ -122,6 +207,53 @@ GLuint LoadProgram(bool separable_program, std::span<const GLuint> shaders,
          LOG_ERROR(Render_OpenGL, "Error linking shader {}: No log produced.", debug_name);
      }
  
@@ -929,6 +972,21 @@ index 5ccfe01..43e3a94 100644
      global_scope_depth--;
  }
  
+diff --git a/src/video_core/renderer_opengl/renderer_opengl.cpp b/src/video_core/renderer_opengl/renderer_opengl.cpp
+index 8244a83..9e440f5 100644
+--- a/src/video_core/renderer_opengl/renderer_opengl.cpp
++++ b/src/video_core/renderer_opengl/renderer_opengl.cpp
+@@ -158,6 +158,10 @@ void RendererOpenGL::SwapBuffers() {
+ }
+ 
+ void RendererOpenGL::LimitFramesAheadOfGpu() {
++#ifdef __EMSCRIPTEN__
++    // WebGL2 forbids GL_TIMEOUT_IGNORED in clientWaitSync; worker rAF paces frames instead.
++    return;
++#endif
+     const GLsync game_frame_fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+     glFlush();
+     if (previous_game_frame_fence) {
 diff --git a/src/video_core/renderer_software/renderer_software.cpp b/src/video_core/renderer_software/renderer_software.cpp
 index 14aabca..d8d02b5 100644
 --- a/src/video_core/renderer_software/renderer_software.cpp
