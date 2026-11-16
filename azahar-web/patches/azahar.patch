@@ -538,11 +538,45 @@ index 4cc7777..144ca36 100644
  }
  
  void RasterizerOpenGL::UploadUniforms(bool accelerate_draw) {
+diff --git a/src/video_core/renderer_opengl/gl_shader_disk_cache.cpp b/src/video_core/renderer_opengl/gl_shader_disk_cache.cpp
+index 3dae1fd..c2ac2af 100644
+--- a/src/video_core/renderer_opengl/gl_shader_disk_cache.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_disk_cache.cpp
+@@ -395,6 +395,9 @@ void ShaderDiskCache::SaveDecompiled(u64 unique_identifier, const std::string& c
+ }
+ 
+ void ShaderDiskCache::SaveDump(u64 unique_identifier, GLuint program) {
++#ifdef __EMSCRIPTEN__
++    return;
++#endif
+     if (!IsUsable())
+         return;
+ 
+@@ -418,6 +421,9 @@ void ShaderDiskCache::SaveDump(u64 unique_identifier, GLuint program) {
+ }
+ 
+ void ShaderDiskCache::SaveDumpToFile(u64 unique_identifier, GLuint program, bool sanitize_mul) {
++#ifdef __EMSCRIPTEN__
++    return;
++#endif
+     if (!IsUsable())
+         return;
+ 
 diff --git a/src/video_core/renderer_opengl/gl_shader_manager.cpp b/src/video_core/renderer_opengl/gl_shader_manager.cpp
-index 411b762..f084e19 100644
+index 411b762..aeded28 100644
 --- a/src/video_core/renderer_opengl/gl_shader_manager.cpp
 +++ b/src/video_core/renderer_opengl/gl_shader_manager.cpp
-@@ -335,7 +335,12 @@ public:
+@@ -69,6 +69,9 @@ static OGLProgram GeneratePrecompiledProgram(const ShaderDiskCacheDump& dump,
+ }
+ 
+ static std::set<GLenum> GetSupportedFormats() {
++#ifdef __EMSCRIPTEN__
++    return {};
++#endif
+     std::set<GLenum> supported_formats;
+ 
+     GLint num_formats{};
+@@ -335,7 +338,12 @@ public:
  
          // Enable the geometry-shader only if we are actually doing per-fragment lighting
          // and care about proper quaternions. Otherwise just use standard vertex+fragment shaders.
@@ -555,7 +589,7 @@ index 411b762..f084e19 100644
  
          res.use_clip_planes = profile.has_clip_planes;
          res.use_geometry_shader = use_geometry_shader;
-@@ -396,9 +401,16 @@ void ShaderProgramManager::UseFixedGeometryShader(const Pica::RegsInternal& regs
+@@ -396,9 +404,16 @@ void ShaderProgramManager::UseFixedGeometryShader(const Pica::RegsInternal& regs
          .separable_shader = impl->separable,
      };
  
