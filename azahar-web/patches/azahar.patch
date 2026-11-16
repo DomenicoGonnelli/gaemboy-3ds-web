@@ -318,10 +318,23 @@ index 6f3de4e..132f6f3 100644
  
  void BlitHelper::Draw(OGLProgram& program, GLuint dst_tex, GLuint dst_fbo, u32 dst_level,
 diff --git a/src/video_core/renderer_opengl/gl_driver.cpp b/src/video_core/renderer_opengl/gl_driver.cpp
-index 0c02521..b03b701 100644
+index 0c02521..22d6cf4 100644
 --- a/src/video_core/renderer_opengl/gl_driver.cpp
 +++ b/src/video_core/renderer_opengl/gl_driver.cpp
-@@ -177,7 +177,12 @@ void Driver::CheckExtensionSupport() {
+@@ -169,7 +169,12 @@ void Driver::CheckExtensionSupport() {
+     arb_clear_texture = GLAD_GL_ARB_clear_texture;
+     arb_get_texture_sub_image = GLAD_GL_ARB_get_texture_sub_image;
+     arb_texture_compression_bptc = GLAD_GL_ARB_texture_compression_bptc;
++#ifdef __EMSCRIPTEN__
++    // WebGL2 requires explicit getExtension("WEBGL_clip_cull_distance"); use FS/shader fallback.
++    clip_cull_distance = false;
++#else
+     clip_cull_distance = !is_gles || GLAD_GL_EXT_clip_cull_distance;
++#endif
+     ext_texture_compression_s3tc = GLAD_GL_EXT_texture_compression_s3tc;
+     ext_shader_framebuffer_fetch = GLAD_GL_EXT_shader_framebuffer_fetch;
+     arm_shader_framebuffer_fetch = GLAD_GL_ARM_shader_framebuffer_fetch;
+@@ -177,7 +182,12 @@ void Driver::CheckExtensionSupport() {
      nv_fragment_shader_interlock = GLAD_GL_NV_fragment_shader_interlock;
      intel_fragment_shader_ordering = GLAD_GL_INTEL_fragment_shader_ordering;
      blend_minmax_factor = GLAD_GL_AMD_blend_minmax_factor || GLAD_GL_NV_blend_minmax_factor;
@@ -719,7 +732,7 @@ index 8f02213..084c63a 100644
          if (shader != 0) {
              glDetachShader(program_id, shader);
 diff --git a/src/video_core/renderer_opengl/gl_state.cpp b/src/video_core/renderer_opengl/gl_state.cpp
-index 4f41499..688765f 100644
+index 4f41499..3a3460d 100644
 --- a/src/video_core/renderer_opengl/gl_state.cpp
 +++ b/src/video_core/renderer_opengl/gl_state.cpp
 @@ -223,20 +223,32 @@ void OpenGLState::Apply() const {
@@ -771,6 +784,23 @@ index 4f41499..688765f 100644
      // Framebuffer
      if (draw.read_framebuffer != cur_state.draw.read_framebuffer) {
          glBindFramebuffer(GL_READ_FRAMEBUFFER, draw.read_framebuffer);
+@@ -335,6 +349,7 @@ void OpenGLState::Apply() const {
+     }
+ 
+     // Clip distance
++#ifndef __EMSCRIPTEN__
+     if (!GLES || GLAD_GL_EXT_clip_cull_distance) {
+         for (std::size_t i = 0; i < clip_distance.size(); ++i) {
+             if (clip_distance[i] != cur_state.clip_distance[i]) {
+@@ -347,6 +362,8 @@ void OpenGLState::Apply() const {
+         }
+     }
+ 
++#endif
++
+     if (renderbuffer != cur_state.renderbuffer) {
+         glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
+     }
 diff --git a/src/video_core/renderer_opengl/gl_stream_buffer.cpp b/src/video_core/renderer_opengl/gl_stream_buffer.cpp
 index aac24a4..56728a4 100644
 --- a/src/video_core/renderer_opengl/gl_stream_buffer.cpp
