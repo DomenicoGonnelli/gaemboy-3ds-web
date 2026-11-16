@@ -732,10 +732,41 @@ index 8f02213..084c63a 100644
          if (shader != 0) {
              glDetachShader(program_id, shader);
 diff --git a/src/video_core/renderer_opengl/gl_state.cpp b/src/video_core/renderer_opengl/gl_state.cpp
-index 4f41499..3a3460d 100644
+index 4f41499..f8124ce 100644
 --- a/src/video_core/renderer_opengl/gl_state.cpp
 +++ b/src/video_core/renderer_opengl/gl_state.cpp
-@@ -223,20 +223,32 @@ void OpenGLState::Apply() const {
+@@ -172,6 +172,7 @@ void OpenGLState::Apply() const {
+             glDisable(GL_BLEND);
+         }
+ 
++#ifndef __EMSCRIPTEN__
+         // GLES does not support glLogicOp
+         if (!GLES) {
+             if (blend.enabled) {
+@@ -180,6 +181,7 @@ void OpenGLState::Apply() const {
+                 glEnable(GL_COLOR_LOGIC_OP);
+             }
+         }
++#endif
+     }
+ 
+     if (blend.color.red != cur_state.blend.color.red ||
+@@ -202,12 +204,14 @@ void OpenGLState::Apply() const {
+         glBlendEquationSeparate(blend.rgb_equation, blend.a_equation);
+     }
+ 
++#ifndef __EMSCRIPTEN__
+     // GLES does not support glLogicOp
+     if (!GLES) {
+         if (logic_op != cur_state.logic_op) {
+             glLogicOp(logic_op);
+         }
+     }
++#endif
+ 
+     // Textures
+     for (u32 i = 0; i < texture_units.size(); ++i) {
+@@ -223,20 +227,32 @@ void OpenGLState::Apply() const {
      // Texture buffer LUTs
      if (texture_buffer_lut_lf.texture_buffer != cur_state.texture_buffer_lut_lf.texture_buffer) {
          glActiveTexture(TextureUnits::TextureBufferLUT_LF.Enum());
@@ -768,7 +799,7 @@ index 4f41499..3a3460d 100644
      }
  
      // Color buffer
-@@ -245,6 +257,7 @@ void OpenGLState::Apply() const {
+@@ -245,6 +261,7 @@ void OpenGLState::Apply() const {
          glBindTexture(GL_TEXTURE_2D, color_buffer.texture_2d);
      }
  
@@ -776,7 +807,7 @@ index 4f41499..3a3460d 100644
      // Shadow Images
      if (image_shadow_buffer != cur_state.image_shadow_buffer) {
          glBindImageTexture(ImageUnits::ShadowBuffer, image_shadow_buffer, 0, GL_FALSE, 0,
-@@ -281,6 +294,7 @@ void OpenGLState::Apply() const {
+@@ -281,6 +298,7 @@ void OpenGLState::Apply() const {
                             GL_READ_ONLY, GL_R32UI);
      }
  
@@ -784,7 +815,7 @@ index 4f41499..3a3460d 100644
      // Framebuffer
      if (draw.read_framebuffer != cur_state.draw.read_framebuffer) {
          glBindFramebuffer(GL_READ_FRAMEBUFFER, draw.read_framebuffer);
-@@ -335,6 +349,7 @@ void OpenGLState::Apply() const {
+@@ -335,6 +353,7 @@ void OpenGLState::Apply() const {
      }
  
      // Clip distance
@@ -792,7 +823,7 @@ index 4f41499..3a3460d 100644
      if (!GLES || GLAD_GL_EXT_clip_cull_distance) {
          for (std::size_t i = 0; i < clip_distance.size(); ++i) {
              if (clip_distance[i] != cur_state.clip_distance[i]) {
-@@ -347,6 +362,8 @@ void OpenGLState::Apply() const {
+@@ -347,6 +366,8 @@ void OpenGLState::Apply() const {
          }
      }
  
@@ -891,7 +922,7 @@ index 8b3e29f..b98f880 100644
  
      GLintptr buffer_pos = 0;
 diff --git a/src/video_core/renderer_opengl/gl_texture_runtime.cpp b/src/video_core/renderer_opengl/gl_texture_runtime.cpp
-index 5ccfe01..43e3a94 100644
+index 5ccfe01..6519e2e 100644
 --- a/src/video_core/renderer_opengl/gl_texture_runtime.cpp
 +++ b/src/video_core/renderer_opengl/gl_texture_runtime.cpp
 @@ -97,12 +97,15 @@ static constexpr std::array<FormatTuple, 8> CUSTOM_TUPLES = {{
@@ -992,7 +1023,19 @@ index 5ccfe01..43e3a94 100644
  
      return copy_texture.handle;
  }
-@@ -817,7 +865,9 @@ DebugScope::~DebugScope() {
+@@ -796,7 +844,11 @@ Sampler::Sampler(TextureRuntime&, VideoCore::SamplerParams params) {
+     glSamplerParameteri(handle, GL_TEXTURE_WRAP_S, wrap_s);
+     glSamplerParameteri(handle, GL_TEXTURE_WRAP_T, wrap_t);
+ 
++#ifndef __EMSCRIPTEN__
+     glSamplerParameterfv(handle, GL_TEXTURE_BORDER_COLOR, gl_color.AsArray());
++#else
++    (void)gl_color;
++#endif
+ 
+     glSamplerParameterf(handle, GL_TEXTURE_MIN_LOD, lod_min);
+     glSamplerParameterf(handle, GL_TEXTURE_MAX_LOD, lod_max);
+@@ -817,7 +869,9 @@ DebugScope::~DebugScope() {
      if (!Settings::values.renderer_debug) {
          return;
      }
@@ -1002,6 +1045,34 @@ index 5ccfe01..43e3a94 100644
      global_scope_depth--;
  }
  
+diff --git a/src/video_core/renderer_opengl/pica_to_gl.h b/src/video_core/renderer_opengl/pica_to_gl.h
+index 3b5d86e..641ff5c 100644
+--- a/src/video_core/renderer_opengl/pica_to_gl.h
++++ b/src/video_core/renderer_opengl/pica_to_gl.h
+@@ -53,13 +53,21 @@ inline GLenum TextureMinFilterMode(TextureFilter min, TextureFilter mip) {
+ inline GLenum WrapMode(Pica::TexturingRegs::TextureConfig::WrapMode mode) {
+     static constexpr std::array<GLenum, 8> wrap_mode_table{{
+         GL_CLAMP_TO_EDGE,   // WrapMode::ClampToEdge
+-        GL_CLAMP_TO_BORDER, // WrapMode::ClampToBorder
++        #ifdef __EMSCRIPTEN__
++    GL_CLAMP_TO_EDGE,
++#else
++    GL_CLAMP_TO_BORDER,
++#endif // WrapMode::ClampToBorder
+         GL_REPEAT,          // WrapMode::Repeat
+         GL_MIRRORED_REPEAT, // WrapMode::MirroredRepeat
+         // TODO(wwylele): ClampToEdge2 and ClampToBorder2 are not properly implemented here. See the
+         // comments in enum WrapMode.
+         GL_CLAMP_TO_EDGE,   // WrapMode::ClampToEdge2
+-        GL_CLAMP_TO_BORDER, // WrapMode::ClampToBorder2
++        #ifdef __EMSCRIPTEN__
++    GL_CLAMP_TO_EDGE,
++#else
++    GL_CLAMP_TO_BORDER,
++#endif // WrapMode::ClampToBorder2
+         GL_REPEAT,          // WrapMode::Repeat2
+         GL_REPEAT,          // WrapMode::Repeat3
+     }};
 diff --git a/src/video_core/renderer_opengl/renderer_opengl.cpp b/src/video_core/renderer_opengl/renderer_opengl.cpp
 index 8244a83..9e440f5 100644
 --- a/src/video_core/renderer_opengl/renderer_opengl.cpp
