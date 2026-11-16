@@ -289,6 +289,22 @@ La pagina è pronta per i dump **della tua cartuccia**. Il repo non contiene gio
 | Audio | AudioWorklet con ring condiviso e ricampionamento da 32 728 Hz. Verificato con la musica di Super Haxagon. Sotto il 100% di velocità l'audio gracchia (va in underrun). |
 | Salvataggi | IndexedDB (IDBFS), sync ogni 10 s, con il pulsante "Salva ora" e alla chiusura della pagina. Verificato: il mondo Craftus sopravvive al reload. |
 
+**Test in formato cartuccia, senza giochi commerciali.** `azahar-web/scripts/cia2cci.py` estrae dai `.cia`
+ufficiali degli homebrew il programma **NCCH/CXI** (lo stesso formato del contenuto delle cartucce: ExHeader,
+ExeFS con codice compresso, RomFS IVFC) e lo racchiude in un'immagine **`.3ds` NCSD** come quella di una cartuccia.
+Caricati con "Carica gioco…", passano dal caricatore delle cartucce di Azahar (`ncch.cpp`, Program ID reale,
+ExHeader, logo ExeFS) e si giocano:
+
+| File | Program ID | Esito |
+|---|---|---|
+| `craftus_cart.3ds` (MIT) | `000400000FAB2400` | Mondo 3D creato via touch, camminata, ~16,5 fps |
+| `haxagon_cart.3ds` (GPL) | `000400000099AA00` | Menu livelli col tasto A, audio attivo, ~38 fps |
+| `craftus_cart.cxi` (MIT) | `000400000FAB2400` | Menu touch, ~30 fps |
+
+Cosa resta da verificare solo con un gioco commerciale (dump della propria cartuccia): servizi HLE e
+funzioni PICA usati dai giochi Nintendo (fragment lighting, shadow, procedural texture, geometry shader) e il
+carico GPU reale.
+
 Gli homebrew libctru avviano l'audio solo se esiste `sdmc:/3ds/dspfirm.cdc`. L'audio HLE di Azahar non usa quel
 file, quindi il worker crea un **segnaposto vuoto** (nessun codice Nintendo). Ai giochi commerciali non serve.
 
