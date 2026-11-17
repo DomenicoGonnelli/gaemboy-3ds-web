@@ -143,7 +143,7 @@ veloce. Il rapporto WASM/nativo sull'A71 è 0,46, contro 0,67–0,75 sul Mac.
    scende da ~290 a 9 MIPS. Chromium non lo fa. Lo stesso effetto si ha con la Modalità di isolamento di iOS.
    Conseguenze: la versione web va servita **solo in HTTPS** (GAEMBOY lo è già) e i test su iPhone vanno fatti in HTTPS.
    La pagina del benchmark ora rileva il JIT spento e segnala il risultato come non valido.
-   Il primo test su iPhone (iOS, Safari 27 via `http://192.168.1.19`) aveva dato 3% RT / 6 MIPS proprio per
+   Il primo test su iPhone (iOS, Safari 27 via IP di rete locale) aveva dato 3% RT / 6 MIPS proprio per
    questo, ed è stato riprodotto sul Mac.
 5. **Memoria**: FastInterp usa ~11 MB di block cache (16384 blocchi × 664 B) più 4 MB di page table vuota.
    DynCom invece riserva staticamente 125 MiB di cache di traduzione: un'altra ragione per escluderlo in WASM.

@@ -13,7 +13,8 @@ export PATH="/opt/homebrew/bin:$PATH"
 source "${EMSDK:-$HOME/emsdk}/emsdk_env.sh" >/dev/null 2>&1
 
 # Native wasm exceptions/longjmp: the core uses C++ exceptions (default Emscripten would abort).
-CFLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm"
+# -ffile-prefix-map strips local absolute paths from __FILE__ strings embedded in the wasm.
+CFLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm -ffile-prefix-map=$ROOT/= -ffile-prefix-map=$HOME/="
 LINK_FLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm \
  -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency+8 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sOFFSCREENCANVAS_SUPPORT=1 \
  -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=1024MB -sMAXIMUM_MEMORY=4GB \
