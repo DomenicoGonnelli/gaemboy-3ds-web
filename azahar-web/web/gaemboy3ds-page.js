@@ -78,6 +78,8 @@ function notice(text, kind = 'info') {
 
 if (isSafari && useSw) {
   notice('Safari rilevato: renderer software attivo (WebGL2 su OffscreenCanvas in worker è limitato su Safari). Per il 3D a 60 fps in WebGL2 apri http://localhost:8766/ in Chrome (oppure ?gl per forzare WebGL2).', 'info');
+} else if (!isSafari && useSw) {
+  notice(`Renderer software forzato da ?sw: i giochi 3D pesanti girano molto più lenti. Per WebGL2 (GPU, consigliato) apri ${location.origin}${location.pathname}`, 'bad');
 }
 if (!crossOriginIsolated) {
   notice('La pagina non è cross-origin isolated (servono header COOP/COEP): i thread WASM non possono partire.', 'bad');
@@ -128,7 +130,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=6', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=7', { type: 'module' });
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
