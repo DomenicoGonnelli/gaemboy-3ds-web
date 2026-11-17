@@ -46,6 +46,12 @@ index cfb63c3..bb2d6f6 100644
 +    target_include_directories(robin_map INTERFACE ./robin-map/include)
 +    add_library(tsl::robin_map ALIAS robin_map)
 +endif()
+diff --git a/externals/libressl b/externals/libressl
+--- a/externals/libressl
++++ b/externals/libressl
+@@ -1 +1 @@
+-Subproject commit 88b8e41b71099fabc57813bc06d8bc1aba050a19
++Subproject commit 88b8e41b71099fabc57813bc06d8bc1aba050a19-dirty
 diff --git a/src/citra_libretro/CMakeLists.txt b/src/citra_libretro/CMakeLists.txt
 index e28f994..4afb381 100644
 --- a/src/citra_libretro/CMakeLists.txt
@@ -184,6 +190,26 @@ index 814863e..d2c1caa 100644
  endif()
  
  if (CITRA_USE_PRECOMPILED_HEADERS)
+diff --git a/src/video_core/rasterizer_cache/rasterizer_cache.h b/src/video_core/rasterizer_cache/rasterizer_cache.h
+index 7313f0d..d8feb45 100644
+--- a/src/video_core/rasterizer_cache/rasterizer_cache.h
++++ b/src/video_core/rasterizer_cache/rasterizer_cache.h
+@@ -137,7 +137,15 @@ void RasterizerCache<T>::RunGarbageCollector() {
+         // Tick-values less than or equal to the current resource-tick are possibly still in-use.
+         // Tick-values larger than the current resource-tick are not being utilized anymore and can
+         // be safely deleted.
++#ifdef __EMSCRIPTEN__
++        // GAEMBOY web: keep sentenced surfaces alive for a few frames so CreateSurface can
++        // recycle them. Under ANGLE/WebGL, deleting and recreating textures and framebuffers
++        // every frame saturates the browser GPU process.
++        constexpr u64 RecycleGraceFrames = 8;
++        if (resource_free_tick <= resource_last_used_tick + RecycleGraceFrames) {
++#else
+         if (resource_free_tick <= resource_last_used_tick) {
++#endif
+             // Resource is still in-use, skip deletion
+             it++;
+             continue;
 diff --git a/src/video_core/renderer_opengl/gl_blit_helper.cpp b/src/video_core/renderer_opengl/gl_blit_helper.cpp
 index 6f3de4e..132f6f3 100644
 --- a/src/video_core/renderer_opengl/gl_blit_helper.cpp
@@ -358,10 +384,29 @@ index 0c02521..22d6cf4 100644
  
  void Driver::FindBugs() {
 diff --git a/src/video_core/renderer_opengl/gl_rasterizer.cpp b/src/video_core/renderer_opengl/gl_rasterizer.cpp
-index 4cc7777..144ca36 100644
+index 4cc7777..8883d47 100644
 --- a/src/video_core/renderer_opengl/gl_rasterizer.cpp
 +++ b/src/video_core/renderer_opengl/gl_rasterizer.cpp
-@@ -67,6 +67,11 @@ GLenum MakeAttributeType(Pica::PipelineRegs::VertexAttributeFormat format) {
+@@ -30,9 +30,18 @@ using VideoCore::SurfaceType;
+ using namespace Common::Literals;
+ using namespace Pica::Shader::Generator;
+ 
++#ifdef __EMSCRIPTEN__
++// GAEMBOY web: ANGLE (Metal/D3D) may copy the whole buffer when glBufferSubData targets a buffer
++// still in use by the GPU, so multi-MiB stream buffers turn every upload into a huge memcpy in the
++// browser GPU process. Small buffers keep those copies cheap and orphan (glBufferData) more often.
++constexpr std::size_t VERTEX_BUFFER_SIZE = 2_MiB;
++constexpr std::size_t INDEX_BUFFER_SIZE = 256_KiB;
++constexpr std::size_t UNIFORM_BUFFER_SIZE = 256_KiB;
++#else
+ constexpr std::size_t VERTEX_BUFFER_SIZE = 16_MiB;
+ constexpr std::size_t INDEX_BUFFER_SIZE = 2_MiB;
+ constexpr std::size_t UNIFORM_BUFFER_SIZE = 8_MiB;
++#endif
+ constexpr std::size_t TEXTURE_BUFFER_SIZE = 2_MiB;
+ 
+ GLenum MakePrimitiveMode(Pica::PipelineRegs::TriangleTopology topology) {
+@@ -67,6 +76,11 @@ GLenum MakeAttributeType(Pica::PipelineRegs::VertexAttributeFormat format) {
  [[nodiscard]] GLsizeiptr TextureBufferSize(const Driver& driver, bool is_lf) {
      // Use the smallest texel size from the texel views
      // which corresponds to GL_RG32F
@@ -373,7 +418,7 @@ index 4cc7777..144ca36 100644
      GLint max_texel_buffer_size;
      glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &max_texel_buffer_size);
      GLsizeiptr candidate = std::min<GLsizeiptr>(max_texel_buffer_size * 8ULL, TEXTURE_BUFFER_SIZE);
-@@ -90,8 +95,13 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+@@ -90,8 +104,13 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
        vertex_buffer{driver, GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE},
        uniform_buffer{driver, GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE},
        index_buffer{driver, GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE},
@@ -387,7 +432,7 @@ index 4cc7777..144ca36 100644
  
      // Clipping plane 0 is always enabled for PICA fixed clip plane z <= 0
      state.clip_distance[0] = true;
-@@ -151,12 +161,26 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+@@ -151,12 +170,26 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
      state.texture_buffer_lut_rg.texture_buffer = texture_buffer_lut_rg.handle;
      state.texture_buffer_lut_rgba.texture_buffer = texture_buffer_lut_rgba.handle;
      state.Apply();
@@ -414,7 +459,7 @@ index 4cc7777..144ca36 100644
  
      // Bind index buffer for hardware shader path
      state.draw.vertex_array = hw_vao.handle;
-@@ -165,9 +189,11 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+@@ -165,9 +198,11 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
  
      glEnable(GL_BLEND);
  
@@ -426,7 +471,7 @@ index 4cc7777..144ca36 100644
  }
  
  RasterizerOpenGL::~RasterizerOpenGL() = default;
-@@ -533,6 +559,28 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+@@ -533,6 +568,28 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
              memory.GetPhysicalPointer(regs.pipeline.vertex_attributes.GetPhysicalBaseAddress() +
                                        regs.pipeline.index_array.offset);
          std::tie(buffer_ptr, buffer_offset, std::ignore) = index_buffer.Map(index_buffer_size, 4);
@@ -455,7 +500,7 @@ index 4cc7777..144ca36 100644
          std::memcpy(buffer_ptr, index_data, index_buffer_size);
          index_buffer.Unmap(index_buffer_size);
  
-@@ -542,6 +590,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+@@ -542,6 +599,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                        index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
                                        reinterpret_cast<const void*>(buffer_offset),
                                        -static_cast<GLint>(vertex_array_info.vs_input_index_min));
@@ -463,7 +508,7 @@ index 4cc7777..144ca36 100644
      } else {
          glDrawArrays(primitive_mode, 0, regs.pipeline.num_vertices);
      }
-@@ -931,9 +980,14 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
+@@ -931,9 +989,14 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
      }
  
      std::size_t bytes_used = 0;
@@ -478,7 +523,7 @@ index 4cc7777..144ca36 100644
  
      if (invalidate) {
          pica.lighting.lut_dirty = pica.lighting.LutAllDirty;
-@@ -968,7 +1022,19 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
+@@ -968,7 +1031,19 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
          pica.fog.lut_dirty = false;
      }
  
@@ -498,7 +543,7 @@ index 4cc7777..144ca36 100644
  }
  
  void RasterizerOpenGL::SyncAndUploadLUTs() {
-@@ -982,8 +1048,13 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
+@@ -982,8 +1057,13 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
      }
  
      std::size_t bytes_used = 0;
@@ -512,7 +557,7 @@ index 4cc7777..144ca36 100644
  
      if (invalidate) {
          pica.proctex.table_dirty = pica.proctex.TableAllDirty;
-@@ -1041,7 +1112,25 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
+@@ -1041,7 +1121,25 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
  
      pica.proctex.table_dirty = 0;
  

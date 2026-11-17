@@ -283,6 +283,16 @@ rasterizzazione e shader sulla GPU, ed è l'unica leva che può portare un gioco
 
 ### Problemi trovati e risolti
 
+0. **WebGL2 lento in Chrome/macOS (14–18% → 100%).** Il collo di bottiglia era il processo GPU di Chrome
+   (ANGLE su Metal), non la CPU. Gli stream buffer di Azahar (vertex 16 MiB, uniform 8 MiB) venivano aggiornati
+   con `glBufferSubData` mentre la GPU li stava ancora usando. ANGLE allora copiava l'intero buffer e si
+   sincronizzava (`memcpy` grandi e `waitUntilCompleted`) a ogni upload, e il worker restava in attesa sul command
+   buffer. Su web i buffer ora sono più piccoli: vertex 2 MiB, index 256 KiB, uniform 256 KiB
+   (`gl_rasterizer.cpp`, `#ifdef __EMSCRIPTEN__`). In più il garbage collector della `RasterizerCache`
+   distruggeva e ricreava a ogni frame le surface e i framebuffer appena usati, perché
+   `free tick == current frame`. Ora le surface restano vive per altri 8 frame e vengono riciclate
+   (`rasterizer_cache.h`). Risultato su Craftus e Super Haxagon: 60 fps stabili, circa 1,3 ms per frame.
+
 1. **Wide mode 800 px non supportata da Azahar.** Il sorgente di Super Haxagon disattiva il wide mode solo se il
    nome utente della console è `CITRA`/`LIME3DS`/`ENCORE`. Azahar non è in quella lista, quindi l'immagine appariva
    tagliata a metà, anche in Azahar desktop. Il wide mode è segnalato dai bit 5–6 del formato del framebuffer
