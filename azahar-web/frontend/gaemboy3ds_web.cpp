@@ -27,6 +27,7 @@
 
 namespace OpenGL {
 extern int g_web_stream_mode; // gl_stream_buffer.cpp
+extern int g_web_shader_mode; // gl_shader_util.cpp
 }
 
 namespace {
@@ -366,6 +367,10 @@ int main(int argc, char** argv) {
         if (std::strcmp(argv[i], "--stream=ring") == 0) {
             OpenGL::g_web_stream_mode = 0;
             std::printf("[gaemboy] stream buffer GL: ring + bufferSubData\n");
+        }
+        if (std::strcmp(argv[i], "--shaders=sync") == 0) {
+            OpenGL::g_web_shader_mode = 0;
+            std::printf("[gaemboy] shader GL: compilazione sincrona\n");
         }
     }
     DefaultOptions(use_sw);
