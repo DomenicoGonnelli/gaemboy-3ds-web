@@ -29,10 +29,8 @@ const PAD_DEADZONE = 0.15;
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
 const urlParams = new URLSearchParams(location.search);
-const isSafari = /^((?!chrome|crios|android).)*safari/i.test(navigator.userAgent);
-// WebKit/Safari throttles OffscreenCanvas WebGL2 in a worker (~1-8 fps); default to software on
-// Safari (override with ?gl) and WebGL2 on Chromium/Chrome (override with ?sw).
-const useSw = urlParams.has('sw') || (isSafari && !urlParams.has('gl'));
+// WebGL2 (GPU) everywhere, Safari included; ?sw forces the much slower software renderer.
+const useSw = urlParams.has('sw');
 const ctx = useSw ? canvas.getContext('2d') : null;
 const logEl = $('log');
 const bench = { startedAt: 0, frames: [] };
@@ -76,9 +74,7 @@ function notice(text, kind = 'info') {
   $('notice').textContent = text;
 }
 
-if (isSafari && useSw) {
-  notice('Safari rilevato: renderer software attivo (WebGL2 su OffscreenCanvas in worker è limitato su Safari). Per il 3D a 60 fps in WebGL2 apri questa pagina in Chrome (oppure ?gl per forzare WebGL2).', 'info');
-} else if (!isSafari && useSw) {
+if (useSw) {
   notice(`Renderer software forzato da ?sw: i giochi 3D pesanti girano molto più lenti. Per WebGL2 (GPU, consigliato) apri ${location.origin}${location.pathname}`, 'bad');
 }
 if (!crossOriginIsolated) {
@@ -130,7 +126,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=13', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=14', { type: 'module' });
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);

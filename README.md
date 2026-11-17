@@ -17,7 +17,7 @@ Proof of concept that works on desktop browsers.
 
 | | |
 |---|---|
-| Browsers | Chrome / Edge (WebGL2 renderer, recommended). Safari uses the software renderer by default. |
+| Browsers | Chrome / Edge / Safari (WebGL2 renderer by default; `?sw` forces the slower software renderer). |
 | Performance | On an Apple M2 Pro, homebrew and heavy commercial titles run at or near full speed in Chrome. |
 | Mobile | Phone browsers are too slow, because WebAssembly has no ARM JIT. Use a native Android build of Azahar instead. |
 | Formats | Decrypted `.3ds` / `.cci` / `.cxi` / `.app`, homebrew `.3dsx` / `.elf`. The file is read locally in chunks and never uploaded. |
