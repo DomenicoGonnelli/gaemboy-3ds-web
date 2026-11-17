@@ -325,6 +325,20 @@ rasterizzazione e shader sulla GPU, ed è l'unica leva che può portare un gioco
    web passano da `texSubImage2D`, facevano anche un `bufferSubData`/`bufferData` inutile sul buffer
    `GL_ARRAY_BUFFER` attivo, cioè sul vertex buffer: ora sono solo staging in CPU. `?stream=ring` ripristina
    il vecchio percorso, per confronto.
+7. **"Lagghetti" residui (GL ormai ~23 ms/s)**: erano compilazioni sincrone degli shader. La prima volta che
+   un effetto appare, `getShaderParameter`/`getProgramParameter` aspettavano il driver per 70-750 ms
+   (fino a 2,8 s/s di shader). Ora, con `KHR_parallel_shader_compile`, compile e link partono in background
+   senza query bloccanti. Il rasterizer interroga `COMPLETION_STATUS_KHR` e salta i draw finché il
+   programma non è pronto, come la compilazione asincrona del backend Vulkan; i draw piccoli (≤ 6 vertici)
+   aspettano comunque. Effetto collaterale possibile: per qualche frame manca un pezzo di geometria.
+   `?shaders=sync` ripristina la compilazione sincrona, per confronto.
+8. **Freeze di 0,4-1,9 s entrando/uscendo dalle scene**: in quei secondi GL, shader e file erano a zero. Il
+   gioco carica e scarica moduli di codice (CRO, es. `LoadCRO "DllField"` con 3016 simboli) e
+   `CROHelper::ApplyRelocation`/`ClearRelocation` invalidano la cache CPU **per ogni parola rilocata**.
+   `BlockCache::InvalidateRange` di FastInterp scorreva tutte le 16384 entry (~10 MB) a ogni chiamata: decine
+   di migliaia di scansioni. Ora una bitmap di pagine da 4 KB (128 KB, un bit per pagina con codice
+   decodificato) fa uscire subito le invalidazioni che non toccano codice. Dopo una scansione, le pagine
+   interamente coperte vengono azzerate.
 
 ### Provare un gioco vero (input, audio, salvataggi)
 

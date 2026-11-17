@@ -190,6 +190,98 @@ index 814863e..d2c1caa 100644
  endif()
  
  if (CITRA_USE_PRECOMPILED_HEADERS)
+diff --git a/src/core/arm/fastinterp/fastinterp.cpp b/src/core/arm/fastinterp/fastinterp.cpp
+index cd24691..ac6080f 100644
+--- a/src/core/arm/fastinterp/fastinterp.cpp
++++ b/src/core/arm/fastinterp/fastinterp.cpp
+@@ -94,6 +94,7 @@ void ARM_FastInterp::Run() {
+         }
+         if (!cache_hit) {
+             DecodeBlockInto(block, pc);
++            cache_.MarkCode(block->start_pc, block->end_pc);
+         }
+ 
+         u64 executed = ExecuteBlock(block);
+@@ -159,6 +160,7 @@ void ARM_FastInterp::Step() {
+         term.cond = 0xE;
+         block->inst_count = slot + 1;
+         block->end_pc = pc + 4;
++        cache_.MarkCode(pc, pc + 4);
+     }
+ 
+     u64 executed = ExecuteBlock(block);
+diff --git a/src/core/arm/fastinterp/fastinterp_cache.h b/src/core/arm/fastinterp/fastinterp_cache.h
+index de26f90..ec8878c 100644
+--- a/src/core/arm/fastinterp/fastinterp_cache.h
++++ b/src/core/arm/fastinterp/fastinterp_cache.h
+@@ -44,6 +44,17 @@ public:
+             block.chain_target = nullptr; // Prevent dangling pointers
+         }
+         std::memset(lru_state_.data(), 0, lru_state_.size());
++        code_pages_.fill(0);
++    }
++
++    /// Record that a decoded block covers [start_addr, end_addr). Must be called
++    /// once the block's end_pc is known so InvalidateRange can skip pages that
++    /// hold no decoded code.
++    void MarkCode(u32 start_addr, u32 end_addr) {
++        const u32 last = (end_addr > start_addr ? end_addr - 1 : start_addr) >> PAGE_BITS;
++        for (u32 page = start_addr >> PAGE_BITS; page <= last; ++page) {
++            code_pages_[page >> 6] |= u64{1} << (page & 63);
++        }
+     }
+ 
+     /// Invalidate cache entries whose decoded range intersects [start_addr, start_addr+length)
+@@ -52,7 +63,22 @@ public:
+         // range: walk every entry and match on the block's own address range.
+         // inst_count is zeroed so surviving pointers to the entry (chain
+         // targets) fizzle instead of executing the stale decode.
++        if (length == 0) {
++            return;
++        }
+         const u64 end_addr = static_cast<u64>(start_addr) + length;
++        const u32 first_page = start_addr >> PAGE_BITS;
++        const u32 last_page = static_cast<u32>((end_addr - 1) >> PAGE_BITS);
++        // Fast path: HLE relocation (LDR:RO) patches thousands of single words,
++        // mostly data. Scanning all CACHE_SIZE blocks (~10MB) per word stalled
++        // scene transitions for seconds; most ranges touch no decoded code.
++        bool has_code = false;
++        for (u32 page = first_page; page <= last_page && !has_code; ++page) {
++            has_code = (code_pages_[page >> 6] >> (page & 63)) & 1;
++        }
++        if (!has_code) {
++            return;
++        }
+         for (size_t i = 0; i < CACHE_SIZE; ++i) {
+             if (tags_[i] == INVALID_TAG) {
+                 continue;
+@@ -63,6 +89,14 @@ public:
+                 blocks_[i].chain_target = nullptr;
+             }
+         }
++        // Every block overlapping a page fully inside the range was invalidated
++        // above, so those pages hold no decoded code anymore.
++        for (u32 page = first_page; page <= last_page; ++page) {
++            const u64 page_start = static_cast<u64>(page) << PAGE_BITS;
++            if (page_start >= start_addr && page_start + (u64{1} << PAGE_BITS) <= end_addr) {
++                code_pages_[page >> 6] &= ~(u64{1} << (page & 63));
++            }
++        }
+     }
+ 
+     /// Look up a block by PC (returns nullptr if not found)
+@@ -149,6 +183,11 @@ private:
+     std::array<u32, CACHE_SIZE> tags_;
+     std::array<BasicBlock, CACHE_SIZE> blocks_;
+     std::array<u8, CACHE_SETS> lru_state_;
++
++    /// One bit per 4KB guest page that may hold decoded blocks (conservative:
++    /// evicted blocks leave their bit set until the page is invalidated).
++    static constexpr u32 PAGE_BITS = 12;
++    std::array<u64, (u64{1} << (32 - PAGE_BITS)) / 64> code_pages_;
+ };
+ 
+ } // namespace Core::FastInterp
 diff --git a/src/video_core/rasterizer_cache/rasterizer_cache.h b/src/video_core/rasterizer_cache/rasterizer_cache.h
 index 7313f0d..d8feb45 100644
 --- a/src/video_core/rasterizer_cache/rasterizer_cache.h
