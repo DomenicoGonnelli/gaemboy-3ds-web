@@ -25,6 +25,10 @@
 #include "common/settings.h"
 #include "libretro.h"
 
+namespace OpenGL {
+extern int g_web_stream_mode; // gl_stream_buffer.cpp
+}
+
 namespace {
 
 constexpr uint32_t kMaxFbPixels = 1024 * 1024;
@@ -359,6 +363,10 @@ int main(int argc, char** argv) {
     for (int i = 2; i < argc; i++) {
         if (std::strcmp(argv[i], "--sw") == 0) use_sw = true;
         if (std::strcmp(argv[i], "--io-selftest") == 0) io_selftest = true;
+        if (std::strcmp(argv[i], "--stream=ring") == 0) {
+            OpenGL::g_web_stream_mode = 0;
+            std::printf("[gaemboy] stream buffer GL: ring + bufferSubData\n");
+        }
     }
     DefaultOptions(use_sw);
     // --opt=key=value overrides any core option (e.g. citra_cpu_clock_percentage=75).

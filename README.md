@@ -309,6 +309,22 @@ rasterizzazione e shader sulla GPU, ed è l'unica leva che può portare un gioco
    thread) e il pool vale `navigator.hardwareConcurrency + 8` (rasterizer software e shader cache usano
    `hardware_concurrency` thread). La pagina ha anche un watchdog: se i frame restano fermi per più di 5 s, mostra
    un avviso. Il pulsante **Scarica log** esporta in JSON log, statistiche, user agent e numero di core.
+5. **Rallentamenti nei giochi pesanti (picchi al 100%, cali al 5-30%)**: per capire la causa il worker misura
+   ogni secondo il tempo speso nelle chiamate WebGL (shader compile/link, draw, upload, sync), nelle letture
+   della ROM (WORKERFS) e il frame più lungo. La riga **Dettaglio (ultimo secondo)** lo mostra; ogni chiamata
+   sopra i 25 ms finisce nel log come `[perf] chiamata lenta: …`, e lo storico (`perf`) è nel JSON di
+   **Scarica log**. Se a pesare è la CPU emulata, `?cpu=NN` (25–400) riduce il clock della CPU 3DS emulata
+   (`citra_cpu_clock_percentage`, il classico trucco di Citra per i giochi pesanti). In generale
+   `?args=--opt=chiave=valore` sovrascrive qualsiasi opzione del core.
+6. **Gioco commerciale al 23-40% già nei menu, anche con `?cpu=75`**: i log mostravano ~1000 ms/s dentro
+   WebGL (upload `bufferSubData` 300-500 ms/s, e chiamate banali come `activeTexture` da 50 ms), quindi il
+   collo di bottiglia era il GPU process di Chrome, non la CPU. Con ANGLE/Metal, un `bufferSubData` su un
+   buffer che la GPU sta ancora leggendo copia l'intero buffer: con centinaia di draw per frame sono
+   centinaia di copie. Ora ogni upload di vertici, indici e uniform rimpiazza lo storage (`glBufferData`,
+   dimensioni a potenze di due) e non tocca mai dati in uso. In più le LUT (luci, nebbia, proctex), che sul
+   web passano da `texSubImage2D`, facevano anche un `bufferSubData`/`bufferData` inutile sul buffer
+   `GL_ARRAY_BUFFER` attivo, cioè sul vertex buffer: ora sono solo staging in CPU. `?stream=ring` ripristina
+   il vecchio percorso, per confronto.
 
 ### Provare un gioco vero (input, audio, salvataggi)
 

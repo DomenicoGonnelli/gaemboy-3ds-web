@@ -130,7 +130,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=9', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=10', { type: 'module' });
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
@@ -181,6 +181,8 @@ function boot(file) {
     extraArgs.push(`--opt=citra_cpu_clock_percentage=${cpuClock}`);
     log(`[gaemboy] clock CPU emulata al ${cpuClock}%`);
   }
+  // ?stream=ring restores the old ring-buffer upload path (default: orphan every upload).
+  if (new URLSearchParams(location.search).get('stream') === 'ring') extraArgs.push('--stream=ring');
   let offscreen = null;
   if (!useSw && canvas.transferControlToOffscreen) {
     try {

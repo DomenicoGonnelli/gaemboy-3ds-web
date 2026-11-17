@@ -384,7 +384,7 @@ index 0c02521..22d6cf4 100644
  
  void Driver::FindBugs() {
 diff --git a/src/video_core/renderer_opengl/gl_rasterizer.cpp b/src/video_core/renderer_opengl/gl_rasterizer.cpp
-index 4cc7777..8883d47 100644
+index 4cc7777..a7763f5 100644
 --- a/src/video_core/renderer_opengl/gl_rasterizer.cpp
 +++ b/src/video_core/renderer_opengl/gl_rasterizer.cpp
 @@ -30,9 +30,18 @@ using VideoCore::SurfaceType;
@@ -418,13 +418,14 @@ index 4cc7777..8883d47 100644
      GLint max_texel_buffer_size;
      glGetIntegerv(GL_MAX_TEXTURE_BUFFER_SIZE, &max_texel_buffer_size);
      GLsizeiptr candidate = std::min<GLsizeiptr>(max_texel_buffer_size * 8ULL, TEXTURE_BUFFER_SIZE);
-@@ -90,8 +104,13 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+@@ -90,8 +104,14 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
        vertex_buffer{driver, GL_ARRAY_BUFFER, VERTEX_BUFFER_SIZE},
        uniform_buffer{driver, GL_UNIFORM_BUFFER, UNIFORM_BUFFER_SIZE},
        index_buffer{driver, GL_ELEMENT_ARRAY_BUFFER, INDEX_BUFFER_SIZE},
 +#ifdef __EMSCRIPTEN__
-+      texture_buffer{driver, GL_ARRAY_BUFFER, TextureBufferSize(driver, false)},
-+      texture_lf_buffer{driver, GL_ARRAY_BUFFER, TextureBufferSize(driver, true)} {
++      // GL_NONE = CPU-only staging: the LUT data reaches the GPU through glTexSubImage2D.
++      texture_buffer{driver, GL_NONE, TextureBufferSize(driver, false)},
++      texture_lf_buffer{driver, GL_NONE, TextureBufferSize(driver, true)} {
 +#else
        texture_buffer{driver, GL_TEXTURE_BUFFER, TextureBufferSize(driver, false)},
        texture_lf_buffer{driver, GL_TEXTURE_BUFFER, TextureBufferSize(driver, true)} {
@@ -432,7 +433,7 @@ index 4cc7777..8883d47 100644
  
      // Clipping plane 0 is always enabled for PICA fixed clip plane z <= 0
      state.clip_distance[0] = true;
-@@ -151,12 +170,26 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+@@ -151,12 +171,26 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
      state.texture_buffer_lut_rg.texture_buffer = texture_buffer_lut_rg.handle;
      state.texture_buffer_lut_rgba.texture_buffer = texture_buffer_lut_rgba.handle;
      state.Apply();
@@ -459,7 +460,7 @@ index 4cc7777..8883d47 100644
  
      // Bind index buffer for hardware shader path
      state.draw.vertex_array = hw_vao.handle;
-@@ -165,9 +198,11 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
+@@ -165,9 +199,11 @@ RasterizerOpenGL::RasterizerOpenGL(Memory::MemorySystem& memory, Pica::PicaCore&
  
      glEnable(GL_BLEND);
  
@@ -471,7 +472,7 @@ index 4cc7777..8883d47 100644
  }
  
  RasterizerOpenGL::~RasterizerOpenGL() = default;
-@@ -533,6 +568,28 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+@@ -533,6 +569,28 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
              memory.GetPhysicalPointer(regs.pipeline.vertex_attributes.GetPhysicalBaseAddress() +
                                        regs.pipeline.index_array.offset);
          std::tie(buffer_ptr, buffer_offset, std::ignore) = index_buffer.Map(index_buffer_size, 4);
@@ -500,7 +501,7 @@ index 4cc7777..8883d47 100644
          std::memcpy(buffer_ptr, index_data, index_buffer_size);
          index_buffer.Unmap(index_buffer_size);
  
-@@ -542,6 +599,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
+@@ -542,6 +600,7 @@ bool RasterizerOpenGL::AccelerateDrawBatchInternal(bool is_indexed) {
                                        index_u16 ? GL_UNSIGNED_SHORT : GL_UNSIGNED_BYTE,
                                        reinterpret_cast<const void*>(buffer_offset),
                                        -static_cast<GLint>(vertex_array_info.vs_input_index_min));
@@ -508,7 +509,7 @@ index 4cc7777..8883d47 100644
      } else {
          glDrawArrays(primitive_mode, 0, regs.pipeline.num_vertices);
      }
-@@ -931,9 +989,14 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
+@@ -931,9 +990,14 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
      }
  
      std::size_t bytes_used = 0;
@@ -523,7 +524,7 @@ index 4cc7777..8883d47 100644
  
      if (invalidate) {
          pica.lighting.lut_dirty = pica.lighting.LutAllDirty;
-@@ -968,7 +1031,19 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
+@@ -968,7 +1032,19 @@ void RasterizerOpenGL::SyncAndUploadLUTsLF() {
          pica.fog.lut_dirty = false;
      }
  
@@ -543,7 +544,7 @@ index 4cc7777..8883d47 100644
  }
  
  void RasterizerOpenGL::SyncAndUploadLUTs() {
-@@ -982,8 +1057,13 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
+@@ -982,8 +1058,13 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
      }
  
      std::size_t bytes_used = 0;
@@ -557,7 +558,7 @@ index 4cc7777..8883d47 100644
  
      if (invalidate) {
          pica.proctex.table_dirty = pica.proctex.TableAllDirty;
-@@ -1041,7 +1121,25 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
+@@ -1041,7 +1122,25 @@ void RasterizerOpenGL::SyncAndUploadLUTs() {
  
      pica.proctex.table_dirty = 0;
  
@@ -922,10 +923,43 @@ index 4f41499..f8124ce 100644
          glBindRenderbuffer(GL_RENDERBUFFER, renderbuffer);
      }
 diff --git a/src/video_core/renderer_opengl/gl_stream_buffer.cpp b/src/video_core/renderer_opengl/gl_stream_buffer.cpp
-index aac24a4..56728a4 100644
+index aac24a4..e466792 100644
 --- a/src/video_core/renderer_opengl/gl_stream_buffer.cpp
 +++ b/src/video_core/renderer_opengl/gl_stream_buffer.cpp
-@@ -24,6 +24,14 @@ OGLStreamBuffer::OGLStreamBuffer(Driver& driver, GLenum target, GLsizeiptr size,
+@@ -2,6 +2,7 @@
+ // Licensed under GPLv2 or any later version
+ // Refer to the misc/licenses/gplv2.txt file included.
+ 
++#include <algorithm>
+ #include "common/alignment.h"
+ #include "common/assert.h"
+ #include "common/microprofile.h"
+@@ -13,9 +14,24 @@ MICROPROFILE_DEFINE(OpenGL_StreamBuffer, "OpenGL", "Stream Buffer Orphaning",
+ 
+ namespace OpenGL {
+ 
++#ifdef __EMSCRIPTEN__
++int g_web_stream_mode = 1;
++#endif
++
+ OGLStreamBuffer::OGLStreamBuffer(Driver& driver, GLenum target, GLsizeiptr size,
+                                  bool prefer_coherent)
+     : gl_target(target), buffer_size(size) {
++#ifdef __EMSCRIPTEN__
++    if (target == GL_NONE) {
++        cpu_only = true;
++        cpu_buffer.resize(static_cast<std::size_t>(size));
++        mapped_ptr = cpu_buffer.data();
++        (void)driver;
++        (void)prefer_coherent;
++        return;
++    }
++    orphan_each_upload = g_web_stream_mode == 1;
++#endif
+     gl_buffer.Create();
+     glBindBuffer(gl_target, gl_buffer.handle);
+ 
+@@ -24,6 +40,14 @@ OGLStreamBuffer::OGLStreamBuffer(Driver& driver, GLenum target, GLsizeiptr size,
          allocate_size *= 2;
      }
  
@@ -940,7 +974,7 @@ index aac24a4..56728a4 100644
      if (GLAD_GL_ARB_buffer_storage) {
          persistent = true;
          coherent = prefer_coherent;
-@@ -35,6 +43,7 @@ OGLStreamBuffer::OGLStreamBuffer(Driver& driver, GLenum target, GLsizeiptr size,
+@@ -35,6 +59,7 @@ OGLStreamBuffer::OGLStreamBuffer(Driver& driver, GLenum target, GLsizeiptr size,
      } else {
          glBufferData(gl_target, allocate_size, nullptr, GL_STREAM_DRAW);
      }
@@ -948,12 +982,19 @@ index aac24a4..56728a4 100644
  }
  
  OGLStreamBuffer::~OGLStreamBuffer() {
-@@ -72,6 +81,12 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
+@@ -72,6 +97,19 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
          }
      }
  
 +#ifdef __EMSCRIPTEN__
-+    if (invalidate) {
++    if (orphan_each_upload) {
++        // ANGLE (Metal/D3D) copies the whole buffer when glBufferSubData hits storage the GPU is
++        // still reading, which on draw-heavy games stalls the browser GPU process. Replacing the
++        // storage on every upload (glBufferData in Unmap) never touches in-flight data.
++        buffer_pos = 0;
++        return std::make_tuple(cpu_buffer.data(), buffer_pos, true);
++    }
++    if (invalidate && !cpu_only) {
 +        glBufferData(gl_target, buffer_size, nullptr, GL_STREAM_DRAW);
 +    }
 +    return std::make_tuple(cpu_buffer.data() + buffer_pos, buffer_pos, invalidate);
@@ -961,7 +1002,7 @@ index aac24a4..56728a4 100644
      if (invalidate || !persistent) {
          MICROPROFILE_SCOPE(OpenGL_StreamBuffer);
          GLbitfield flags = GL_MAP_WRITE_BIT | (persistent ? GL_MAP_PERSISTENT_BIT : 0) |
-@@ -83,11 +98,17 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
+@@ -83,11 +121,33 @@ std::tuple<u8*, GLintptr, bool> OGLStreamBuffer::Map(GLsizeiptr size, GLintptr a
      }
  
      return std::make_tuple(mapped_ptr + buffer_pos - mapped_offset, buffer_pos, invalidate);
@@ -972,6 +1013,22 @@ index aac24a4..56728a4 100644
      ASSERT(size <= mapped_size);
 -
 +#ifdef __EMSCRIPTEN__
++    if (cpu_only) {
++        buffer_pos += size;
++        return;
++    }
++    if (orphan_each_upload) {
++        if (size > 0) {
++            // Power-of-two size buckets let the browser/ANGLE recycle allocations.
++            GLsizeiptr alloc = 1024;
++            while (alloc < size) {
++                alloc <<= 1;
++            }
++            alloc = std::min<GLsizeiptr>(alloc, static_cast<GLsizeiptr>(cpu_buffer.size()));
++            glBufferData(gl_target, alloc, cpu_buffer.data(), GL_STREAM_DRAW);
++        }
++        return;
++    }
 +    if (size > 0) {
 +        glBufferSubData(gl_target, buffer_pos, size, cpu_buffer.data() + buffer_pos);
 +    }
@@ -980,7 +1037,7 @@ index aac24a4..56728a4 100644
      if (!coherent && size > 0) {
          glFlushMappedBufferRange(gl_target, buffer_pos - mapped_offset, size);
      }
-@@ -97,6 +118,7 @@ void OGLStreamBuffer::Unmap(GLsizeiptr size) {
+@@ -97,6 +157,7 @@ void OGLStreamBuffer::Unmap(GLsizeiptr size) {
      }
  
      buffer_pos += size;
@@ -989,10 +1046,10 @@ index aac24a4..56728a4 100644
  
  } // namespace OpenGL
 diff --git a/src/video_core/renderer_opengl/gl_stream_buffer.h b/src/video_core/renderer_opengl/gl_stream_buffer.h
-index 8b3e29f..b98f880 100644
+index 8b3e29f..9594046 100644
 --- a/src/video_core/renderer_opengl/gl_stream_buffer.h
 +++ b/src/video_core/renderer_opengl/gl_stream_buffer.h
-@@ -5,6 +5,7 @@
+@@ -5,12 +5,19 @@
  #pragma once
  
  #include <tuple>
@@ -1000,12 +1057,26 @@ index 8b3e29f..b98f880 100644
  #include "video_core/renderer_opengl/gl_resource_manager.h"
  
  namespace OpenGL {
-@@ -37,6 +38,9 @@ private:
+ 
+ class Driver;
+ 
++#ifdef __EMSCRIPTEN__
++// GAEMBOY web: 1 = orphan (glBufferData) on every upload, 0 = classic ring + glBufferSubData.
++// Set by the frontend before the core creates the renderer.
++extern int g_web_stream_mode;
++#endif
++
+ class OGLStreamBuffer : private NonCopyable {
+ public:
+     explicit OGLStreamBuffer(Driver& driver, GLenum target, GLsizeiptr size,
+@@ -37,6 +44,11 @@ private:
      GLenum gl_target;
  
      bool coherent = false;
 +#ifdef __EMSCRIPTEN__
 +    std::vector<u8> cpu_buffer;
++    bool cpu_only = false;
++    bool orphan_each_upload = false;
 +#endif
      bool persistent = false;
  
