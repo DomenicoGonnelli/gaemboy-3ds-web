@@ -41,10 +41,15 @@ window.__gb3ds = bench;
 // The log panel keeps the last lines only and is re-rendered at most twice a second.
 const LOG_KEEP = 400;
 const logLines = [];
+// Larger history kept only for the "Scarica log" export (freeze reports).
+const LOG_EXPORT_KEEP = 20000;
+const logHistory = [];
 let logDirty = false;
 let logTotal = 0;
 let logRate = { t: performance.now(), total: 0, perSec: 0 };
 function log(line) {
+  logHistory.push(`${(performance.now() / 1000).toFixed(3)} ${line}`);
+  if (logHistory.length > LOG_EXPORT_KEEP) logHistory.splice(0, logHistory.length - LOG_EXPORT_KEEP);
   logLines.push(line);
   if (logLines.length > LOG_KEEP) logLines.splice(0, logLines.length - LOG_KEEP);
   logDirty = true;
@@ -123,7 +128,13 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=4', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=5', { type: 'module' });
+  worker.onerror = (e) => {
+    const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
+    log(`[worker] ${msg}`);
+    notice(`Il worker dell'emulatore si è interrotto: ${msg}`, 'bad');
+  };
+  worker.onmessageerror = () => log('[worker] messaggio non deserializzabile');
   worker.onmessage = ({ data }) => {
     switch (data.type) {
       case 'logs':
@@ -133,6 +144,7 @@ function boot(file) {
         break;
       case 'error':
         notice(`Errore nel caricamento del modulo: ${data.message}`, 'bad');
+        log(`[errore] ${data.message}`);
         break;
       case 'saved':
         $('s-saves').textContent = data.ok ? `ok ${new Date().toLocaleTimeString()}` : `errore: ${data.error}`;
@@ -278,7 +290,52 @@ function updateStats() {
   }
   if (status === 3 && $('notice').hidden) notice('Il core non è riuscito a caricare il file (vedi log).', 'bad');
   bench.frames.push({ t: elapsed, frames, fps, avgMs, audioSeconds: audio / AUDIO_HZ, status });
+  if (bench.frames.length > 4000) bench.frames.splice(0, bench.frames.length - 4000);
+  checkFreeze(status, frames, now);
 }
+
+// Watchdog: the stats above are read from shared memory, so they keep updating even when the
+// emulator thread is stuck — a frame counter that stops while "running" means a freeze.
+const watchdog = { frames: -1, since: 0, reported: false };
+function checkFreeze(status, frames, now) {
+  if (status !== 2 || frames !== watchdog.frames) {
+    if (watchdog.reported && status === 2) {
+      log(`[watchdog] l'emulazione è ripartita (frame ${frames})`);
+      notice('L\'emulazione è ripartita.', 'info');
+    }
+    watchdog.frames = frames;
+    watchdog.since = now;
+    watchdog.reported = false;
+    return;
+  }
+  if (!watchdog.reported && now - watchdog.since > 5000 && !document.hidden) {
+    watchdog.reported = true;
+    log(`[watchdog] nessun frame da ${((now - watchdog.since) / 1000).toFixed(1)} s (fermo a ${frames})`);
+    notice(`L'emulazione sembra bloccata (frame fermi a ${frames}). Premi "Scarica log" e inviami il file.`, 'bad');
+  }
+}
+
+function downloadLog() {
+  const report = {
+    when: new Date().toISOString(),
+    userAgent: navigator.userAgent,
+    cores: navigator.hardwareConcurrency,
+    url: location.href,
+    renderer: ctx ? 'software' : 'webgl2',
+    rom: $('rom-info').textContent,
+    notice: $('notice').hidden ? '' : $('notice').textContent,
+    watchdog,
+    stats: bench.frames.slice(-240),
+    logs: logHistory,
+  };
+  const blob = new Blob([JSON.stringify(report, null, 1)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `gaemboy3ds-log-${Date.now()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+}
+$('dl-log').onclick = downloadLog;
 
 // ---------------------------------------------------------------- UI
 async function startDemo(name) {

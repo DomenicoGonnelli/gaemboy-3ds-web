@@ -15,7 +15,7 @@ source "$HOME/emsdk/emsdk_env.sh" >/dev/null 2>&1
 # Native wasm exceptions/longjmp: the core uses C++ exceptions (default Emscripten would abort).
 CFLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm"
 LINK_FLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm \
- -sPTHREAD_POOL_SIZE=8 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sOFFSCREENCANVAS_SUPPORT=1 \
+ -sPTHREAD_POOL_SIZE=navigator.hardwareConcurrency+8 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES3=1 -sOFFSCREENCANVAS_SUPPORT=1 \
  -sALLOW_MEMORY_GROWTH=1 -sINITIAL_MEMORY=1024MB -sMAXIMUM_MEMORY=4GB \
  -sSTACK_SIZE=8MB -sDEFAULT_PTHREAD_STACK_SIZE=2MB \
  -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createGaemboy3DS -sENVIRONMENT=web,worker \

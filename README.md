@@ -291,6 +291,14 @@ rasterizzazione e shader sulla GPU, ed è l'unica leva che può portare un gioco
 2. **Sincronizzazione per scanline nel rasterizzatore** (vedi profilo): +30% di fps con il dispatch a bande.
 3. **Profilazione WASM in Chrome**: con Liftoff i frame del loop principale non vengono simbolizzati. Per
    profilare servono `--no-liftoff` e `PROFILE=1` (nomi delle funzioni).
+4. **Freeze dopo ~3 s nei boot "da cartuccia"** (molte richieste FS durante il caricamento). Azahar crea un
+   thread `std::async` per ogni richiesta IPC asincrona. Su web i thread vengono da un pool pre-allocato: quando
+   il pool finisce, un nuovo worker può nascere solo se il thread dell'emulatore cede l'event loop, ma il loop
+   resta bloccato ad aspettarlo, quindi deadlock e log fermi. Correzione: il frontend imposta
+   `deterministic_async_operations = true` (le richieste girano inline sul thread dell'emulatore, senza nuovi
+   thread) e il pool vale `navigator.hardwareConcurrency + 8` (rasterizer software e shader cache usano
+   `hardware_concurrency` thread). La pagina ha anche un watchdog: se i frame restano fermi per più di 5 s, mostra
+   un avviso. Il pulsante **Scarica log** esporta in JSON log, statistiche, user agent e numero di core.
 
 ### Provare un gioco vero (input, audio, salvataggi)
 

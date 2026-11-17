@@ -1,7 +1,9 @@
 // GAEMBOY 3DS — minimal libretro frontend for Azahar's libretro core, built with Emscripten.
 //
-// The module lives in a dedicated Web Worker (web/gaemboy3ds-worker.js) and main() runs in a
-// pthread (-sPROXY_TO_PTHREAD), so retro_run() may block freely. Page and AudioWorklet talk to the
+// The module lives in a dedicated Web Worker (web/gaemboy3ds-worker.js); main() and the frame loop
+// run on that worker (Emscripten's main thread), so retro_run() may block without freezing the
+// page. New pthreads can only be spawned there when the loop yields, so every thread the core
+// needs must come from the pre-allocated pool (see PTHREAD_POOL_SIZE in scripts/build.sh). Page and AudioWorklet talk to the
 // emulator only through the shared-memory struct returned by gb3ds_state(): frames, stats and the
 // audio ring are read from it, input is written into it.
 #include <atomic>
@@ -20,6 +22,7 @@
 #include <emscripten/html5.h>
 
 #include "common/file_util.h"
+#include "common/settings.h"
 #include "libretro.h"
 
 namespace {
@@ -368,6 +371,10 @@ int main(int argc, char** argv) {
     retro_set_input_poll(InputPollCb);
     retro_set_input_state(InputStateCb);
     retro_init();
+    // HLE IPC "async" requests (FS reads/opens, AM, ...) normally spawn one std::async thread per
+    // request. On the web a pool miss cannot be serviced while the frame loop blocks, which
+    // deadlocked retail-style boots after a few hundred FS requests. Run them inline instead.
+    Settings::values.deterministic_async_operations.SetValue(true);
 
     g_state.status = 1;
     retro_game_info info{};
