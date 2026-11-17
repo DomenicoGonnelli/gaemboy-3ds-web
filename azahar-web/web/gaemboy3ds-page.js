@@ -77,7 +77,7 @@ function notice(text, kind = 'info') {
 }
 
 if (isSafari && useSw) {
-  notice('Safari rilevato: renderer software attivo (WebGL2 su OffscreenCanvas in worker è limitato su Safari). Per il 3D a 60 fps in WebGL2 apri http://localhost:8766/ in Chrome (oppure ?gl per forzare WebGL2).', 'info');
+  notice('Safari rilevato: renderer software attivo (WebGL2 su OffscreenCanvas in worker è limitato su Safari). Per il 3D a 60 fps in WebGL2 apri questa pagina in Chrome (oppure ?gl per forzare WebGL2).', 'info');
 } else if (!isSafari && useSw) {
   notice(`Renderer software forzato da ?sw: i giochi 3D pesanti girano molto più lenti. Per WebGL2 (GPU, consigliato) apri ${location.origin}${location.pathname}`, 'bad');
 }
@@ -130,7 +130,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=12', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=13', { type: 'module' });
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
@@ -380,6 +380,12 @@ async function startDemo(name) {
 }
 $('demo').onclick = () => startDemo($('demo').dataset.file);
 $('demo3d').onclick = () => startDemo($('demo3d').dataset.file);
+// Hosted builds only ship redistributable demos: hide buttons whose file is not deployed.
+for (const id of ['demo', 'demo3d']) {
+  fetch(`./homebrew/${$(id).dataset.file}`, { method: 'HEAD' })
+    .then((r) => { if (!r.ok) $(id).hidden = true; })
+    .catch(() => { $(id).hidden = true; });
+}
 $('pick').onclick = () => $('file').click();
 $('file').onchange = (e) => {
   const file = e.target.files[0];

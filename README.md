@@ -34,7 +34,7 @@ The full development log, with benchmarks, problems found and fixes, is in Itali
 | `azahar-web/patches/libressl.patch` | Small build fix for the bundled LibreSSL. |
 | `azahar-web/frontend/` | C++ web frontend (libretro host, audio, input, frame loop). |
 | `azahar-web/web/` | Web page, emulation worker, audio worklet. |
-| `azahar-web/scripts/` | `fetch-azahar-full.sh` (pinned sources and patches), `build.sh`, `serve.py` (dev server with COOP/COEP headers), `cia2cci.py`. |
+| `azahar-web/scripts/` | `fetch-azahar-full.sh` (pinned sources and patches), `build.sh`, `serve.py` (dev server with COOP/COEP headers), `deploy-pages.sh`, `cia2cci.py`. |
 | `cpu-bench/` | ARM11 interpreter benchmark used to assess feasibility (FastInterp vs DynCom in WASM). |
 | `docs/` | Development notes. |
 
@@ -60,6 +60,21 @@ Cross-Origin-Resource-Policy: same-origin
 
 For this reason the emulator should run as its own top-level page (for example on a dedicated
 subdomain) rather than inside an iframe of a site without these headers.
+
+Static hosts that cannot set headers (for example GitHub Pages) are supported through
+`web/coi-sw.js`: a service worker that adds the headers and reloads the page once. Hosts that
+already send the headers never register it.
+
+### GitHub Pages
+
+Live demo: <https://domenicogonnelli.github.io/gaemboy-3ds-web/>
+
+```sh
+azahar-web/scripts/build.sh
+azahar-web/scripts/deploy-pages.sh   # pushes dist/ to the gh-pages branch, recording the source commit
+```
+
+Only redistributable demo homebrew (Craftus Reloaded, MIT) is published next to the build.
 
 URL options: `?sw` forces the software renderer, `?cpu=N` underclocks the emulated CPU (percent).
 

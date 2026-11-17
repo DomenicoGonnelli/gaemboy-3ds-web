@@ -83,6 +83,19 @@
   Progetto non affiliato a né approvato da Nintendo. Nessun gioco, BIOS o chiave è incluso: usa solo dump delle tue cartucce
   o software homebrew. Nintendo 3DS è un marchio di Nintendo.
 </footer>
-<script type="module" src="./gaemboy3ds-page.js?v=12"></script>
+<script>
+  // Static hosts without COOP/COEP headers: let coi-sw.js add them, then reload once under its control.
+  if (!window.crossOriginIsolated && window.isSecureContext && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./coi-sw.js').then(() => {
+      if (!navigator.serviceWorker.controller && !sessionStorage.getItem('coi-reload')) {
+        sessionStorage.setItem('coi-reload', '1');
+        navigator.serviceWorker.ready.then(() => location.reload());
+      }
+    }).catch((err) => console.warn('coi-sw registration failed', err));
+  } else {
+    sessionStorage.removeItem('coi-reload');
+  }
+</script>
+<script type="module" src="./gaemboy3ds-page.js?v=13"></script>
 </body>
 </html>
