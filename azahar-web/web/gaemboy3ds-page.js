@@ -130,7 +130,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=7', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=9', { type: 'module' });
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
@@ -147,6 +147,9 @@ function boot(file) {
       case 'error':
         notice(`Errore nel caricamento del modulo: ${data.message}`, 'bad');
         log(`[errore] ${data.message}`);
+        break;
+      case 'perf':
+        onPerf(data);
         break;
       case 'saved':
         $('s-saves').textContent = data.ok ? `ok ${new Date().toLocaleTimeString()}` : `errore: ${data.error}`;
@@ -172,6 +175,12 @@ function boot(file) {
   // ?args=a,b passes extra argv to the frontend (e.g. --io-selftest for large-file diagnostics).
   const extraArgs = (new URLSearchParams(location.search).get('args') || '').split(',').filter(Boolean);
   if (useSw) extraArgs.push('--sw');
+  // ?cpu=NN underclocks the emulated CPU (Citra's classic fix for CPU-bound heavy games).
+  const cpuClock = parseInt(new URLSearchParams(location.search).get('cpu'), 10);
+  if (cpuClock >= 25 && cpuClock <= 400) {
+    extraArgs.push(`--opt=citra_cpu_clock_percentage=${cpuClock}`);
+    log(`[gaemboy] clock CPU emulata al ${cpuClock}%`);
+  }
   let offscreen = null;
   if (!useSw && canvas.transferControlToOffscreen) {
     try {
@@ -317,6 +326,21 @@ function checkFreeze(status, frames, now) {
   }
 }
 
+// Per-second breakdown sent by the worker (see gaemboy3ds-worker.js): kept for the log export.
+const perfHistory = [];
+function onPerf(p) {
+  const t = bench.startedAt ? (performance.now() - bench.startedAt) / 1000 : 0;
+  perfHistory.push({ t: Math.round(t * 10) / 10, ...p });
+  if (perfHistory.length > 900) perfHistory.splice(0, perfHistory.length - 900);
+  const glTotal = Object.values(p.gl).reduce((a, b) => a + b, 0);
+  const links = p.compiles.linkProgram || 0;
+  const el = $('s-perf');
+  el.textContent = `GL ${glTotal.toFixed(0)} ms/s · shader ${(p.gl.shader || 0).toFixed(0)} ms` +
+    `${links ? ` (${links} link)` : ''} · file ${p.fileMs} ms · frame max ${p.tickMax} ms`;
+  el.className = p.tickMax > 100 ? 'bad' : p.tickMax > 34 ? 'mid' : '';
+  for (const l of p.long) log(`[perf] chiamata lenta: ${l}`);
+}
+
 function downloadLog() {
   const report = {
     when: new Date().toISOString(),
@@ -328,6 +352,7 @@ function downloadLog() {
     notice: $('notice').hidden ? '' : $('notice').textContent,
     watchdog,
     stats: bench.frames.slice(-240),
+    perf: perfHistory,
     logs: logHistory,
   };
   const blob = new Blob([JSON.stringify(report, null, 1)], { type: 'application/json' });

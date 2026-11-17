@@ -361,6 +361,15 @@ int main(int argc, char** argv) {
         if (std::strcmp(argv[i], "--io-selftest") == 0) io_selftest = true;
     }
     DefaultOptions(use_sw);
+    // --opt=key=value overrides any core option (e.g. citra_cpu_clock_percentage=75).
+    for (int i = 2; i < argc; i++) {
+        const std::string arg = argv[i];
+        const auto eq = arg.find('=', 6);
+        if (arg.rfind("--opt=", 0) == 0 && eq != std::string::npos) {
+            g_vars[arg.substr(6, eq - 6)] = arg.substr(eq + 1);
+            std::printf("[gaemboy] opzione %s\n", arg.c_str() + 6);
+        }
+    }
     if (io_selftest) {
         return RunIoSelfTest(rom);
     }
