@@ -10,7 +10,7 @@ BUILD="$ROOT/build-azahar-wasm"
 DIST="$HERE/dist"
 export PATH="/opt/homebrew/bin:$PATH"
 # shellcheck disable=SC1091
-source "$HOME/emsdk/emsdk_env.sh" >/dev/null 2>&1
+source "${EMSDK:-$HOME/emsdk}/emsdk_env.sh" >/dev/null 2>&1
 
 # Native wasm exceptions/longjmp: the core uses C++ exceptions (default Emscripten would abort).
 CFLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm"
