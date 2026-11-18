@@ -21,8 +21,8 @@ LINK_FLAGS="-pthread -fwasm-exceptions -sSUPPORT_LONGJMP=wasm \
  -sSTACK_SIZE=8MB -sDEFAULT_PTHREAD_STACK_SIZE=2MB \
  -sMODULARIZE=1 -sEXPORT_ES6=1 -sEXPORT_NAME=createGaemboy3DS -sENVIRONMENT=web,worker \
  -sFORCE_FILESYSTEM=1 -lworkerfs.js -lidbfs.js \
- -sEXPORTED_FUNCTIONS=_main,_gb3ds_state,_gb3ds_state_size,_gb3ds_tick \
- -sEXPORTED_RUNTIME_METHODS=FS,wasmMemory,addRunDependency,removeRunDependency"
+ -sEXPORTED_FUNCTIONS=_main,_malloc,_free,_gb3ds_state,_gb3ds_state_size,_gb3ds_tick,_gb3ds_camera_buffer,_gb3ds_microphone_active,_gb3ds_save_state_file,_gb3ds_load_state_file,_gb3ds_cheat_count,_gb3ds_cheat_name,_gb3ds_cheat_code,_gb3ds_cheat_enabled,_gb3ds_cheat_add,_gb3ds_cheat_set_enabled,_gb3ds_cheat_remove,_gb3ds_cheat_clear \
+ -sEXPORTED_RUNTIME_METHODS=FS,wasmMemory,addRunDependency,removeRunDependency,UTF8ToString"
 # PROFILE=1 keeps wasm function names for DevTools profiles (optimization level unchanged).
 if [ "${PROFILE:-0}" = "1" ]; then
   LINK_FLAGS="$LINK_FLAGS --profiling-funcs"

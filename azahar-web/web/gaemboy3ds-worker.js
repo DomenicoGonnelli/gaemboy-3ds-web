@@ -1,17 +1,24 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=15';
-const ASSET_VERSION = '15';
+import createGaemboy3DS from './gaemboy3ds.js?v=16';
+import { createSaveArchive } from './gaemboy3ds-archive.js?v=16';
+const ASSET_VERSION = '16';
 
 const SAVES = '/gaemboy/3ds/saves';
 // libctru homebrew only start NDSP if sdmc:/3ds/dspfirm.cdc exists; Azahar's HLE DSP ignores
 // its content, so an empty placeholder (no Nintendo code) is enough. Retail games don't need it.
 const DSP_PLACEHOLDER = `${SAVES}/Azahar/sdmc/3ds/dspfirm.cdc`;
 const SYNC_MS = 10000;
+const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
+const SLOT_COUNT = 3;
 
 const post = (type, data = {}, transfer) => self.postMessage({ type, ...data }, transfer);
 let mod = null;
+let gameKey = '';
+let storageError = null;
+let syncQueue = Promise.resolve();
+let commandQueue = Promise.resolve();
 
 // Core logs are batched: a game spamming warnings must not flood the page's main thread.
 const LOG_MAX_PER_FLUSH = 200;
@@ -29,7 +36,6 @@ setInterval(() => {
   logBuffer = [];
   logDropped = 0;
 }, 250);
-let syncing = false;
 
 // ---------------------------------------------------------------- perf breakdown
 // Lightweight per-second breakdown of where the emulator thread spends time: WebGL calls by
@@ -134,31 +140,258 @@ setInterval(() => {
 }, 1000);
 
 function syncSaves(reason) {
-  if (!mod || syncing) return;
-  syncing = true;
-  mod.FS.syncfs(false, (err) => {
-    syncing = false;
-    post('saved', { ok: !err, reason, error: err ? String(err) : undefined });
-  });
+  const run = async () => {
+    try {
+      if (!mod || storageError) throw new Error(storageError || 'Emulatore non disponibile.');
+      await new Promise((resolve, reject) => {
+        mod.FS.syncfs(false, (err) => err ? reject(err) : resolve());
+      });
+      post('saved', { ok: true, reason });
+    } catch (err) {
+      post('saved', { ok: false, reason, error: String(err) });
+      throw err;
+    }
+  };
+  syncQueue = syncQueue.then(run, run);
+  return syncQueue;
 }
 
 function ensurePath(FS, dir) {
   let cur = '';
   for (const part of dir.split('/').filter(Boolean)) {
     cur += `/${part}`;
-    try { FS.mkdir(cur); } catch { /* exists */ }
+    if (!FS.analyzePath(cur).exists) FS.mkdir(cur);
+    if (!FS.isDir(FS.stat(cur).mode)) throw new Error(`Non è una cartella: ${cur}`);
+  }
+}
+
+async function fingerprint(file) {
+  const sampleSize = Math.min(file.size, 128 * 1024);
+  const positions = file.size <= sampleSize
+    ? [0]
+    : Array.from({ length: 9 }, (_, i) => Math.floor((file.size - sampleSize) * i / 8));
+  const samples = await Promise.all(positions.map((start) => file.slice(start, start + sampleSize).arrayBuffer()));
+  const bytes = new Uint8Array(8 + samples.reduce((size, sample) => size + sample.byteLength, 0));
+  new DataView(bytes.buffer).setBigUint64(0, BigInt(file.size), true);
+  let offset = 8;
+  for (const sample of samples) {
+    bytes.set(new Uint8Array(sample), offset);
+    offset += sample.byteLength;
+  }
+  const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return Array.from(hash, (byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+function callWithStrings(strings, callback) {
+  const pointers = [];
+  try {
+    for (const text of strings) {
+      const bytes = new TextEncoder().encode(text);
+      const pointer = mod._malloc(bytes.length + 1);
+      if (!pointer) throw new Error('Memoria insufficiente.');
+      pointers.push(pointer);
+      const heap = new Uint8Array(mod.wasmMemory.buffer);
+      heap.set(bytes, pointer);
+      heap[pointer + bytes.length] = 0;
+    }
+    return callback(...pointers);
+  } finally {
+    for (const pointer of pointers) mod._free(pointer);
+  }
+}
+
+const stateDir = () => `${SAVES}/web-states/${gameKey}`;
+const cheatPath = () => `${SAVES}/web-cheats/${gameKey}.json`;
+function slotPath(slot) {
+  if (!Number.isInteger(slot) || slot < 1 || slot > SLOT_COUNT) throw new Error('Slot non valido.');
+  return `${stateDir()}/slot-${slot}.gb3dsstate`;
+}
+
+function listSlots() {
+  return Array.from({ length: SLOT_COUNT }, (_, index) => {
+    const slot = index + 1;
+    const path = slotPath(slot);
+    if (!mod.FS.analyzePath(path).exists) return { slot, exists: false };
+    const stat = mod.FS.stat(path);
+    return { slot, exists: true, size: stat.size, modified: stat.mtime.getTime() };
+  });
+}
+
+function listCheats() {
+  const count = mod._gb3ds_cheat_count();
+  if (count < 0) throw new Error('Gioco non in esecuzione.');
+  return Array.from({ length: count }, (_, index) => ({
+    name: mod.UTF8ToString(mod._gb3ds_cheat_name(index)),
+    code: mod.UTF8ToString(mod._gb3ds_cheat_code(index)),
+    enabled: !!mod._gb3ds_cheat_enabled(index),
+  }));
+}
+
+function addCheat(cheat, validateOnly = false) {
+  if (!cheat || typeof cheat.name !== 'string' || typeof cheat.code !== 'string' ||
+      typeof cheat.enabled !== 'boolean' || cheat.name.length > 128 ||
+      cheat.code.length > 65536 || !cheat.name.trim()) {
+    throw new Error('Nome o codice cheat non valido.');
+  }
+  const ok = callWithStrings([cheat.name, cheat.code], (name, code) =>
+    mod._gb3ds_cheat_add(name, code, validateOnly ? -1 : Number(cheat.enabled)));
+  if (!ok) throw new Error(`Codice Gateway non valido: ${cheat.name}.`);
+}
+
+function restoreCheats() {
+  const path = cheatPath();
+  if (!mod.FS.analyzePath(path).exists) return;
+  const data = JSON.parse(mod.FS.readFile(path, { encoding: 'utf8' }));
+  if (data.version !== 1 || data.gameKey !== gameKey || !Array.isArray(data.cheats) ||
+      data.cheats.length > 256) throw new Error('Il file dei cheat non è valido.');
+  for (const cheat of data.cheats) addCheat(cheat, true);
+  mod._gb3ds_cheat_clear();
+  for (const cheat of data.cheats) addCheat(cheat);
+}
+
+async function persistCheats() {
+  const path = cheatPath();
+  try {
+    ensurePath(mod.FS, path.slice(0, path.lastIndexOf('/')));
+    const temporary = `${path}.tmp`;
+    mod.FS.writeFile(temporary, JSON.stringify({ version: 1, gameKey, cheats: listCheats() }, null, 2));
+    mod.FS.rename(temporary, path);
+    await syncSaves('cheat');
+  } catch (err) {
+    throw new Error(`Cheat applicati, ma non salvati nel browser: ${err}`);
+  }
+}
+
+function collectBackupEntries() {
+  const entries = [];
+  let bytes = 0;
+  const excluded = new Set([
+    'web-shader-cache-v1.bin', 'web-shader-cache-v1.bin.tmp',
+    'Azahar/shaders', 'Azahar/cache', 'Azahar/log',
+  ]);
+  function visit(relative) {
+    if (excluded.has(relative)) return;
+    const absolute = relative ? `${SAVES}/${relative}` : SAVES;
+    const stat = mod.FS.lstat(absolute);
+    if (mod.FS.isLink(stat.mode)) throw new Error(`Link simbolico non esportabile: ${relative}`);
+    if (mod.FS.isDir(stat.mode)) {
+      for (const name of mod.FS.readdir(absolute)) {
+        if (name !== '.' && name !== '..') visit(relative ? `${relative}/${name}` : name);
+      }
+    } else if (mod.FS.isFile(stat.mode)) {
+      if (relative.endsWith('.tmp')) return;
+      bytes += stat.size;
+      if (bytes > MAX_BACKUP_BYTES) throw new Error('Backup oltre il limite di 512 MB.');
+      if (entries.length >= 65535) throw new Error('Troppi file nel backup.');
+      entries.push({ name: relative, data: mod.FS.readFile(absolute), modified: stat.mtime });
+    } else {
+      throw new Error(`Tipo di file non esportabile: ${relative}`);
+    }
+  }
+  visit('');
+  return entries;
+}
+
+async function command(action, data) {
+  if (!mod) throw new Error('Emulatore non ancora pronto.');
+  if (storageError) throw new Error(`Salvataggi non disponibili: ${storageError}`);
+  switch (action) {
+    case 'slots':
+      return { slots: listSlots() };
+    case 'save-state': {
+      const path = slotPath(data.slot);
+      ensurePath(mod.FS, stateDir());
+      const temporary = `${path}.tmp`;
+      const ok = callWithStrings([temporary], (name) => mod._gb3ds_save_state_file(name));
+      if (!ok) {
+        if (mod.FS.analyzePath(temporary).exists) mod.FS.unlink(temporary);
+        throw new Error('Il core non è riuscito a creare lo stato. Controlla il log.');
+      }
+      mod.FS.rename(temporary, path);
+      try {
+        await syncSaves('save state');
+      } catch (err) {
+        throw new Error(`Stato creato, ma non salvato nel browser: ${err}`);
+      }
+      return { slots: listSlots() };
+    }
+    case 'load-state': {
+      const path = slotPath(data.slot);
+      if (!mod.FS.analyzePath(path).exists) throw new Error('Slot vuoto.');
+      const ok = callWithStrings([path], (name) => mod._gb3ds_load_state_file(name));
+      if (!ok) throw new Error('Stato incompatibile o danneggiato. Controlla il log.');
+      return { slots: listSlots() };
+    }
+    case 'delete-state': {
+      const path = slotPath(data.slot);
+      if (!mod.FS.analyzePath(path).exists) throw new Error('Slot vuoto.');
+      mod.FS.unlink(path);
+      try {
+        await syncSaves('eliminazione stato');
+      } catch (err) {
+        throw new Error(`Stato eliminato nella sessione, ma non nel browser: ${err}`);
+      }
+      return { slots: listSlots() };
+    }
+    case 'cheats':
+      return { cheats: listCheats() };
+    case 'add-cheat':
+      if (mod._gb3ds_cheat_count() >= 256) throw new Error('Limite di 256 cheat raggiunto.');
+      addCheat({ name: data.name.trim(), code: data.code, enabled: !!data.enabled });
+      await persistCheats();
+      return { cheats: listCheats() };
+    case 'toggle-cheat':
+      if (!mod._gb3ds_cheat_set_enabled(data.index, Number(!!data.enabled))) {
+        throw new Error('Cheat non trovato.');
+      }
+      await persistCheats();
+      return { cheats: listCheats() };
+    case 'delete-cheat':
+      if (!mod._gb3ds_cheat_remove(data.index)) throw new Error('Cheat non trovato.');
+      await persistCheats();
+      return { cheats: listCheats() };
+    case 'export-saves': {
+      await syncSaves('backup');
+      const entries = collectBackupEntries();
+      return { archive: createSaveArchive(entries), files: entries.length };
+    }
+    default:
+      throw new Error(`Operazione sconosciuta: ${action}`);
   }
 }
 
 self.onmessage = async ({ data }) => {
   if (data.type === 'sync') {
-    syncSaves('richiesta');
+    syncSaves('richiesta').catch((err) => logLine(`[gaemboy] sincronizzazione fallita: ${err}`));
+    return;
+  }
+  if (data.type === 'microphone-buffer') {
+    self.__gb3dsMic = data.buffer ? {
+      control: new Int32Array(data.buffer, 0, 3),
+      samples: new Int16Array(data.buffer, 12),
+    } : null;
+    if (self.__gb3dsMic && mod) {
+      Atomics.store(self.__gb3dsMic.control, 2, mod._gb3ds_microphone_active());
+    }
+    return;
+  }
+  if (data.type === 'command') {
+    const run = async () => {
+      try {
+        const result = await command(data.action, data);
+        post('response', { id: data.id, ok: true, result });
+      } catch (err) {
+        post('response', { id: data.id, ok: false, error: String(err.message || err) });
+      }
+    };
+    commandQueue = commandQueue.then(run, run);
     return;
   }
   if (data.type !== 'boot' || mod) return;
   const file = data.file;
   const romName = file.name.replace(/[^\w.\- ]/g, '_');
   try {
+    gameKey = await fingerprint(file);
     mod = await createGaemboy3DS({
       canvas: data.canvas || undefined,
       locateFile: (path, prefix) =>
@@ -174,7 +407,10 @@ self.onmessage = async ({ data }) => {
         FS.mount(FS.filesystems.IDBFS, {}, SAVES);
         m.addRunDependency('gb3ds-idbfs');
         FS.syncfs(true, (err) => {
-          if (err) logLine(`[gaemboy] IDBFS non disponibile: ${err}`);
+          if (err) {
+            storageError = String(err);
+            logLine(`[gaemboy] IDBFS non disponibile: ${err}`);
+          }
           if (data.dspPlaceholder !== false) {
             try {
               FS.stat(DSP_PLACEHOLDER);
@@ -191,10 +427,21 @@ self.onmessage = async ({ data }) => {
       memory: mod.wasmMemory,
       state: mod._gb3ds_state(),
       stateSize: mod._gb3ds_state_size(),
+      cameraBuffer: mod._gb3ds_camera_buffer(),
+      storageError,
       romName,
       romSize: file.size,
     });
-    setInterval(() => syncSaves('periodico'), SYNC_MS);
+    if (!storageError && Atomics.load(new Int32Array(mod.wasmMemory.buffer), mod._gb3ds_state() >> 2) === 2) {
+      try {
+        restoreCheats();
+      } catch (err) {
+        post('warning', { message: `Impossibile ripristinare i cheat: ${err.message || err}` });
+      }
+    }
+    setInterval(() => {
+      syncSaves('periodico').catch((err) => logLine(`[gaemboy] sincronizzazione fallita: ${err}`));
+    }, SYNC_MS);
   } catch (err) {
     post('error', { message: String(err && err.stack ? err.stack : err) });
   }

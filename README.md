@@ -21,10 +21,26 @@ Proof of concept that works on desktop browsers.
 | Performance | On an Apple M2 Pro, homebrew and heavy commercial titles run at or near full speed in Chrome. |
 | Mobile | Phone browsers are too slow, because WebAssembly has no ARM JIT. Use a native Android build of Azahar instead. |
 | Formats | Decrypted `.3ds` / `.cci` / `.cxi` / `.app`, homebrew `.3dsx` / `.elf`. The file is read locally in chunks and never uploaded. |
-| Saves | Game saves and a bounded shader warm-up cache are persisted in the browser (IndexedDB). |
+| Saves | Game saves, save states, cheats and a bounded shader warm-up cache are persisted in the browser (IndexedDB). |
 
 The full development log, with benchmarks, problems found and fixes, is in Italian in
 [docs/DEV-NOTES-it.md](docs/DEV-NOTES-it.md).
+
+## Emulator features
+
+- **Save states:** three slots per game file. Load, overwrite or delete them in the page.
+  States may be incompatible with another game or core version; keep normal in-game saves too.
+  Slots use a fingerprint of the file size and sampled contents, not a full-file hash.
+- **Backup:** export a local ZIP containing all games' saves, states, cheats and emulator system
+  data, without shader caches or temporary files. The archive can contain personal game data.
+  Export is limited to 512 MB; importing backups is not yet available. Browser storage can be
+  cleared or evicted, so keep copies of important saves outside the browser.
+- **Cheats:** add, enable, disable and remove Gateway-format codes for the exact game version.
+  Cheats can crash a game or damage its saves; make a backup first.
+- **Microphone and camera:** explicitly enable each device in the page and grant browser permission.
+  Capture stays local and stops when disabled or the page closes. One physical camera supplies all
+  virtual cameras; stereoscopic capture and camera effects are not supported. Availability depends
+  on browser support and a secure context (HTTPS or localhost).
 
 ## Repository layout
 
@@ -47,6 +63,12 @@ Requirements: [Emscripten SDK](https://emscripten.org/docs/getting_started/downl
 azahar-web/scripts/fetch-azahar-full.sh   # Azahar @ pinned commit + submodules + patches (~210 MB)
 azahar-web/scripts/build.sh               # -> azahar-web/dist/
 python3 azahar-web/scripts/serve.py 8766  # http://localhost:8766/
+```
+
+The focused archive and microphone tests can be run with Node.js 22.7 or later:
+
+```sh
+node --test azahar-web/tests/*.test.mjs
 ```
 
 The page needs **cross-origin isolation** for `SharedArrayBuffer`. Any production host must
@@ -86,10 +108,10 @@ cache never leaves the browser.
 
 ## Source code for deployed builds
 
-Every deployed build corresponds to a tagged commit of this repository. The complete
-corresponding source code is:
+Every deployed build records its source commit in `SOURCE.txt`. The complete corresponding
+source code is:
 
-- this repository at that tag;
+- this repository at that commit;
 - Azahar at the commit pinned in `azahar-web/scripts/fetch-azahar-full.sh`, plus the patches above;
 - the third-party libraries fetched by that script, under their own licenses.
 

@@ -30,6 +30,19 @@
   kbd { background: #2a2f36; border-radius: 4px; padding: 0 4px; font-size: .75rem; }
   footer { margin-top: 16px; color: #9aa0a6; font-size: .75rem; max-width: 960px; line-height: 1.5; }
   footer a { color: #8ab4f8; }
+  .features { max-width: 960px; margin-top: 16px; }
+  .features details { background: #1c2128; border-radius: 8px; margin: 8px 0; padding: 10px 12px; }
+  .features summary { cursor: pointer; font-weight: 600; }
+  .features fieldset { border: 0; margin: 10px 0 0; padding: 0; }
+  .features p { color: #b6bdc5; font-size: .83rem; line-height: 1.5; }
+  .features input, .features select, .features textarea {
+    background: #111418; color: #e8eaed; border: 1px solid #59616b; border-radius: 5px;
+    padding: 7px; font: inherit; margin: 0 8px 8px 0;
+  }
+  .features textarea { display: block; width: min(100%, 440px); box-sizing: border-box; font-family: monospace; }
+  .cheat-item { border-top: 1px solid #39414b; padding-top: 8px; }
+  .cheat-item pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+  #feature-status { min-height: 1.4em; }
 </style>
 </head>
 <body>
@@ -75,6 +88,56 @@
     </div>
   </div>
 </div>
+<section class="features" aria-label="Funzioni emulatore">
+  <div id="feature-status" role="status" aria-live="polite"></div>
+  <details open>
+    <summary>Save state e backup</summary>
+    <fieldset id="storage-actions" disabled>
+      <label for="state-slot">Slot</label>
+      <select id="state-slot">
+        <option value="1">Slot 1 — vuoto</option>
+        <option value="2">Slot 2 — vuoto</option>
+        <option value="3">Slot 3 — vuoto</option>
+      </select>
+      <button id="state-save" type="button">Salva stato</button>
+      <button id="state-load" type="button" class="alt" disabled>Carica stato</button>
+      <button id="state-delete" type="button" class="alt" disabled>Elimina stato</button>
+      <button id="export-saves" type="button" class="alt">Esporta backup ZIP</button>
+    </fieldset>
+    <p>Tre slot per file di gioco, conservati nel browser. Uno stato può non essere compatibile con versioni diverse del core o del gioco.
+      Il backup locale contiene salvataggi, stati, cheat e dati di sistema, ma non la cache shader; il limite è 512 MB.
+      L'importazione del backup non è ancora disponibile. Il browser può cancellare i dati: conserva il backup e usa anche i normali salvataggi nel gioco.</p>
+  </details>
+  <details>
+    <summary>Cheat Gateway</summary>
+    <fieldset id="cheat-actions" disabled>
+      <label for="cheat-name">Nome</label>
+      <input id="cheat-name" maxlength="128" placeholder="Nome del cheat">
+      <label for="cheat-code">Codice Gateway (una riga per istruzione)</label>
+      <textarea id="cheat-code" rows="4" maxlength="65536" placeholder="XXXXXXXX XXXXXXXX"></textarea>
+      <label><input id="cheat-enabled" type="checkbox"> Attiva subito</label>
+      <button id="cheat-add" type="button">Aggiungi cheat</button>
+      <div id="cheat-list"></div>
+    </fieldset>
+    <p>Usa codici Gateway per la versione esatta del gioco. Possono causare crash o corrompere i salvataggi: crea prima un backup.</p>
+  </details>
+  <details>
+    <summary>Microfono e fotocamera</summary>
+    <fieldset id="media-actions" disabled>
+      <button id="mic-toggle" type="button" class="alt">Attiva microfono</button>
+      <span id="mic-status">Disattivato</span><br>
+      <label for="camera-facing">Fotocamera</label>
+      <select id="camera-facing">
+        <option value="user">Frontale / webcam</option>
+        <option value="environment">Posteriore, se disponibile</option>
+      </select>
+      <button id="camera-toggle" type="button" class="alt">Attiva fotocamera</button>
+      <span id="camera-status">Disattivata</span>
+    </fieldset>
+    <p>Il browser chiede il permesso solo quando attivi un dispositivo. Audio e immagini restano locali.
+      Una sola fotocamera alimenta tutte quelle virtuali; la stereoscopia reale e gli effetti non sono supportati.</p>
+  </details>
+</section>
 <div id="log"></div>
 <footer>
   Software libero sotto <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3 o successiva</a> ·
@@ -96,6 +159,6 @@
     sessionStorage.removeItem('coi-reload');
   }
 </script>
-<script type="module" src="./gaemboy3ds-page.js?v=15"></script>
+<script type="module" src="./gaemboy3ds-page.js?v=16"></script>
 </body>
 </html>

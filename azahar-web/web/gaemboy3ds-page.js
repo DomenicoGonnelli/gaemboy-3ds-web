@@ -84,12 +84,130 @@ if (!crossOriginIsolated) {
 let worker = null;
 let memory = null;
 let base = 0;
+let cameraBuffer = 0;
+let storageAvailable = false;
+let featureBusy = false;
+let mediaBusy = false;
+let slots = [];
+let nextRequestId = 1;
+const pendingRequests = new Map();
 const i32 = () => new Int32Array(memory.buffer);
 const f32 = () => new Float32Array(memory.buffer);
 const u8 = () => new Uint8Array(memory.buffer);
 const readI = (k) => Atomics.load(i32(), (base + OFF[k]) >> 2);
 const writeI = (k, v) => Atomics.store(i32(), (base + OFF[k]) >> 2, v);
 const readF = (k) => f32()[(base + OFF[k]) >> 2];
+
+function featureMessage(message, error = false) {
+  $('feature-status').textContent = message;
+  $('feature-status').className = error ? 'bad' : 'good';
+  if (error) log(`[funzioni] ${message}`);
+}
+
+function refreshFeatureControls() {
+  const running = !!memory && readI('status') === 2;
+  $('storage-actions').disabled = $('cheat-actions').disabled = !running || !storageAvailable || featureBusy;
+  $('media-actions').disabled = !running || mediaBusy;
+  const selected = slots.find((slot) => slot.slot === Number($('state-slot').value));
+  $('state-save').disabled = !selected;
+  $('state-load').disabled = $('state-delete').disabled = !selected?.exists;
+  $('camera-facing').disabled = !!cameraStream;
+}
+
+function requestCommand(action, data = {}) {
+  return new Promise((resolve, reject) => {
+    const id = nextRequestId++;
+    pendingRequests.set(id, { resolve, reject });
+    try {
+      worker.postMessage({ type: 'command', id, action, ...data });
+    } catch (err) {
+      pendingRequests.delete(id);
+      reject(err);
+    }
+  });
+}
+
+function failRequests(message) {
+  for (const { reject } of pendingRequests.values()) reject(new Error(message));
+  pendingRequests.clear();
+}
+
+function renderSlots(items) {
+  slots = items;
+  for (const slot of items) {
+    const option = $('state-slot').querySelector(`option[value="${slot.slot}"]`);
+    option.textContent = slot.exists
+      ? `Slot ${slot.slot} — ${new Date(slot.modified).toLocaleString()}`
+      : `Slot ${slot.slot} — vuoto`;
+  }
+  refreshFeatureControls();
+}
+
+function renderCheats(items) {
+  const list = $('cheat-list');
+  list.replaceChildren();
+  for (const [index, cheat] of items.entries()) {
+    const item = document.createElement('div');
+    item.className = 'cheat-item';
+    const label = document.createElement('label');
+    const enabled = document.createElement('input');
+    enabled.type = 'checkbox';
+    enabled.checked = cheat.enabled;
+    enabled.addEventListener('change', async () => {
+      const result = await performFeature('toggle-cheat', { index, enabled: enabled.checked }, 'Cheat aggiornato.');
+      if (!result) enabled.checked = cheat.enabled;
+    });
+    label.append(enabled, document.createTextNode(cheat.name));
+    const code = document.createElement('pre');
+    code.textContent = cheat.code;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'alt';
+    remove.textContent = 'Elimina';
+    remove.addEventListener('click', () => {
+      if (confirm(`Eliminare il cheat "${cheat.name}"?`)) {
+        performFeature('delete-cheat', { index }, 'Cheat eliminato.');
+      }
+    });
+    item.append(label, code, remove);
+    list.append(item);
+  }
+}
+
+async function performFeature(action, data = {}, success = '') {
+  featureBusy = true;
+  refreshFeatureControls();
+  try {
+    const result = await requestCommand(action, data);
+    if (result.slots) renderSlots(result.slots);
+    if (result.cheats) renderCheats(result.cheats);
+    if (success) featureMessage(success);
+    return result;
+  } catch (err) {
+    let message = err.message || String(err);
+    const refresh = action === 'save-state' || action === 'delete-state' ? 'slots' :
+      action === 'add-cheat' || action === 'toggle-cheat' || action === 'delete-cheat' ? 'cheats' : null;
+    if (refresh) {
+      try {
+        const current = await requestCommand(refresh);
+        if (current.slots) renderSlots(current.slots);
+        if (current.cheats) renderCheats(current.cheats);
+      } catch (refreshError) {
+        message += ` Impossibile aggiornare la lista: ${refreshError.message || refreshError}`;
+      }
+    }
+    featureMessage(message, true);
+    return null;
+  } finally {
+    featureBusy = false;
+    refreshFeatureControls();
+  }
+}
+
+async function initializeFeatures() {
+  await performFeature('slots');
+  await performFeature('cheats');
+}
 
 // ---------------------------------------------------------------- audio
 let audioCtx = null;
@@ -126,13 +244,17 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=15', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=16', { type: 'module' });
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
     notice(`Il worker dell'emulatore si è interrotto: ${msg}`, 'bad');
+    failRequests(`Worker interrotto: ${msg}`);
   };
-  worker.onmessageerror = () => log('[worker] messaggio non deserializzabile');
+  worker.onmessageerror = () => {
+    log('[worker] messaggio non deserializzabile');
+    failRequests('Risposta del worker non leggibile.');
+  };
   worker.onmessage = ({ data }) => {
     switch (data.type) {
       case 'logs':
@@ -143,7 +265,19 @@ function boot(file) {
       case 'error':
         notice(`Errore nel caricamento del modulo: ${data.message}`, 'bad');
         log(`[errore] ${data.message}`);
+        failRequests(data.message);
         break;
+      case 'warning':
+        featureMessage(data.message, true);
+        break;
+      case 'response': {
+        const request = pendingRequests.get(data.id);
+        if (!request) break;
+        pendingRequests.delete(data.id);
+        if (data.ok) request.resolve(data.result);
+        else request.reject(new Error(data.error));
+        break;
+      }
       case 'perf':
         onPerf(data);
         break;
@@ -153,6 +287,7 @@ function boot(file) {
       case 'ready':
         memory = data.memory;
         base = data.state;
+        cameraBuffer = data.cameraBuffer;
         if (data.stateSize !== STATE_SIZE) {
           notice(`Struct condivisa incoerente (${data.stateSize} B, attesi ${STATE_SIZE}): ricompila.`, 'bad');
           return;
@@ -160,6 +295,10 @@ function boot(file) {
         log(`Modulo WASM pronto in ${(performance.now() - t0).toFixed(0)} ms`);
         bench.startedAt = performance.now();
         for (const id of ['throttle', 'audio', 'save']) $(id).disabled = false;
+        storageAvailable = !data.storageError;
+        if (data.storageError) featureMessage(`Salvataggi non disponibili: ${data.storageError}`, true);
+        refreshFeatureControls();
+        if (storageAvailable && readI('status') === 2) initializeFeatures();
         initAudio();
         requestAnimationFrame(frame);
         setInterval(updateStats, 250);
@@ -264,6 +403,7 @@ function frame() {
 
 function updateStats() {
   const status = readI('status');
+  refreshFeatureControls();
   const frames = readI('framesTotal');
   const fps = readF('emuFps');
   const avgMs = readF('avgFrameMs');
@@ -410,16 +550,223 @@ $('audio').onclick = async () => {
   $('audio').textContent = audioOn ? 'Audio: on' : 'Audio: off';
 };
 $('save').onclick = () => worker && worker.postMessage({ type: 'sync' });
-addEventListener('pagehide', () => worker && worker.postMessage({ type: 'sync' }));
 
+$('state-slot').onchange = refreshFeatureControls;
+$('state-save').onclick = () => {
+  const slot = slots.find((item) => item.slot === Number($('state-slot').value));
+  if (slot?.exists && !confirm(`Sovrascrivere lo stato nello slot ${slot.slot}?`)) return;
+  performFeature('save-state', { slot: Number($('state-slot').value) }, 'Stato salvato nel browser.');
+};
+$('state-load').onclick = () => {
+  performFeature('load-state', { slot: Number($('state-slot').value) }, 'Stato caricato.');
+};
+$('state-delete').onclick = () => {
+  const slot = Number($('state-slot').value);
+  if (confirm(`Eliminare lo stato nello slot ${slot}?`)) {
+    performFeature('delete-state', { slot }, 'Stato eliminato.');
+  }
+};
+$('export-saves').onclick = async () => {
+  const result = await performFeature('export-saves');
+  if (!result) return;
+  const url = URL.createObjectURL(result.archive);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `gaemboy3ds-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  featureMessage(`Backup esportato: ${result.files} file.`);
+};
+$('cheat-add').onclick = async () => {
+  const name = $('cheat-name').value.trim();
+  const code = $('cheat-code').value.trim();
+  if (!name || !code) {
+    featureMessage('Inserisci il nome e il codice Gateway.', true);
+    return;
+  }
+  const result = await performFeature('add-cheat', {
+    name, code, enabled: $('cheat-enabled').checked,
+  }, 'Cheat aggiunto.');
+  if (result) {
+    $('cheat-name').value = '';
+    $('cheat-code').value = '';
+    $('cheat-enabled').checked = false;
+  }
+};
+
+// ---------------------------------------------------------------- microphone and camera
+let microphoneStream = null;
+let microphoneContext = null;
+let microphoneNode = null;
+let microphoneBuffer = null;
+let cameraStream = null;
+let cameraVideo = null;
+let cameraTimer = null;
+let pageActive = true;
+
+function stopMicrophone() {
+  if (microphoneBuffer) Atomics.store(new Int32Array(microphoneBuffer, 0, 3), 2, 0);
+  if (worker) worker.postMessage({ type: 'microphone-buffer', buffer: null });
+  if (microphoneStream) microphoneStream.getTracks().forEach((track) => track.stop());
+  if (microphoneNode) microphoneNode.disconnect();
+  if (microphoneContext && microphoneContext.state !== 'closed') {
+    microphoneContext.close().catch((err) => log(`[microfono] chiusura: ${err}`));
+  }
+  microphoneStream = microphoneContext = microphoneNode = microphoneBuffer = null;
+  $('mic-toggle').textContent = 'Attiva microfono';
+  $('mic-status').textContent = 'Disattivato';
+}
+
+async function startMicrophone() {
+  if (!navigator.mediaDevices?.getUserMedia || !window.AudioWorkletNode || !window.SharedArrayBuffer) {
+    throw new Error('Il browser non supporta la cattura audio richiesta.');
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+    channelCount: 1, echoCancellation: false, noiseSuppression: false, autoGainControl: false,
+  }, video: false });
+  if (!pageActive) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error('Pagina chiusa.');
+  }
+  microphoneStream = stream;
+  try {
+    microphoneContext = new AudioContext({ latencyHint: 'interactive' });
+    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=16');
+    if (!pageActive) throw new Error('Pagina chiusa.');
+    microphoneBuffer = new SharedArrayBuffer(12 + 65536 * 2);
+    microphoneNode = new AudioWorkletNode(microphoneContext, 'gaemboy3ds-microphone', {
+      numberOfInputs: 1, numberOfOutputs: 1, outputChannelCount: [1],
+      processorOptions: { buffer: microphoneBuffer },
+    });
+    const source = microphoneContext.createMediaStreamSource(stream);
+    const silent = microphoneContext.createGain();
+    silent.gain.value = 0;
+    source.connect(microphoneNode).connect(silent).connect(microphoneContext.destination);
+    worker.postMessage({ type: 'microphone-buffer', buffer: microphoneBuffer });
+    await microphoneContext.resume();
+    if (!pageActive || microphoneContext.state !== 'running') throw new Error('Acquisizione audio non avviata.');
+    stream.getAudioTracks()[0].addEventListener('ended', () => {
+      stopMicrophone();
+      featureMessage('Microfono scollegato.', true);
+      refreshFeatureControls();
+    }, { once: true });
+    microphoneNode.addEventListener('processorerror', () => {
+      stopMicrophone();
+      featureMessage('Elaborazione del microfono interrotta.', true);
+      refreshFeatureControls();
+    }, { once: true });
+    $('mic-toggle').textContent = 'Disattiva microfono';
+    $('mic-status').textContent = 'Attivo';
+  } catch (err) {
+    stopMicrophone();
+    throw err;
+  }
+}
+
+function stopCamera() {
+  if (cameraTimer) clearInterval(cameraTimer);
+  if (memory && cameraBuffer) Atomics.store(new Int32Array(memory.buffer, cameraBuffer, 2), 1, 0);
+  if (cameraStream) cameraStream.getTracks().forEach((track) => track.stop());
+  if (cameraVideo) cameraVideo.srcObject = null;
+  cameraStream = cameraVideo = cameraTimer = null;
+  $('camera-toggle').textContent = 'Attiva fotocamera';
+  $('camera-status').textContent = 'Disattivata';
+}
+
+async function startCamera() {
+  if (!navigator.mediaDevices?.getUserMedia || !cameraBuffer) {
+    throw new Error('Il browser non supporta la cattura video richiesta.');
+  }
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: { ideal: $('camera-facing').value }, width: { ideal: 320 }, height: { ideal: 240 } },
+    audio: false,
+  });
+  if (!pageActive) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error('Pagina chiusa.');
+  }
+  cameraStream = stream;
+  try {
+    cameraVideo = document.createElement('video');
+    cameraVideo.muted = true;
+    cameraVideo.playsInline = true;
+    cameraVideo.srcObject = stream;
+    await cameraVideo.play();
+    if (!pageActive) throw new Error('Pagina chiusa.');
+    const frameCanvas = document.createElement('canvas');
+    frameCanvas.width = 320;
+    frameCanvas.height = 240;
+    const context = frameCanvas.getContext('2d', { willReadFrequently: true });
+    if (!context) throw new Error('Impossibile preparare i frame della fotocamera.');
+    cameraTimer = setInterval(() => {
+      try {
+        if (!cameraVideo?.videoWidth) return;
+        context.drawImage(cameraVideo, 0, 0, 320, 240);
+        const pixels = context.getImageData(0, 0, 320, 240).data;
+        const header = new Int32Array(memory.buffer, cameraBuffer, 2);
+        if (Atomics.compareExchange(header, 0, 0, 1) !== 0) return;
+        try {
+          new Uint8Array(memory.buffer, cameraBuffer + 8, pixels.length).set(pixels);
+          Atomics.store(header, 1, 1);
+        } finally {
+          Atomics.store(header, 0, 0);
+        }
+      } catch (err) {
+        stopCamera();
+        featureMessage(`Fotocamera interrotta: ${err.message || err}`, true);
+        refreshFeatureControls();
+      }
+    }, 1000 / 30);
+    stream.getVideoTracks()[0].addEventListener('ended', () => {
+      stopCamera();
+      featureMessage('Fotocamera scollegata.', true);
+      refreshFeatureControls();
+    }, { once: true });
+    $('camera-toggle').textContent = 'Disattiva fotocamera';
+    $('camera-status').textContent = 'Attiva';
+  } catch (err) {
+    stopCamera();
+    throw err;
+  }
+}
+
+async function toggleMedia(kind) {
+  mediaBusy = true;
+  refreshFeatureControls();
+  try {
+    if (kind === 'microfono') {
+      if (microphoneStream) stopMicrophone();
+      else await startMicrophone();
+    } else {
+      if (cameraStream) stopCamera();
+      else await startCamera();
+    }
+  } catch (err) {
+    featureMessage(`Impossibile attivare ${kind}: ${err.message || err}`, true);
+  } finally {
+    mediaBusy = false;
+    refreshFeatureControls();
+  }
+}
+$('mic-toggle').onclick = () => toggleMedia('microfono');
+$('camera-toggle').onclick = () => toggleMedia('fotocamera');
+addEventListener('pagehide', () => {
+  pageActive = false;
+  stopMicrophone();
+  stopCamera();
+  if (worker) worker.postMessage({ type: 'sync' });
+});
+
+const isControl = (target) => target instanceof Element &&
+  !!target.closest('input, textarea, select, button, summary, a, [contenteditable="true"]');
 addEventListener('keydown', (e) => {
-  if (!memory || e.target instanceof HTMLInputElement) return;
+  if (!memory || isControl(e.target)) return;
   if (e.code in KEYMAP) { keyButtons |= 1 << KEYMAP[e.code]; e.preventDefault(); }
   if (e.code in STICK_KEYS) { keySticks.add(e.code); e.preventDefault(); }
 });
 addEventListener('keyup', (e) => {
-  if (e.code in KEYMAP) { keyButtons &= ~(1 << KEYMAP[e.code]); e.preventDefault(); }
-  if (e.code in STICK_KEYS) { keySticks.delete(e.code); e.preventDefault(); }
+  if (e.code in KEYMAP) { keyButtons &= ~(1 << KEYMAP[e.code]); if (!isControl(e.target)) e.preventDefault(); }
+  if (e.code in STICK_KEYS) { keySticks.delete(e.code); if (!isControl(e.target)) e.preventDefault(); }
 });
 addEventListener('blur', () => { keyButtons = 0; keySticks.clear(); });
 

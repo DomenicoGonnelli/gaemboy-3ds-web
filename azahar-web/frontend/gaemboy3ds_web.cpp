@@ -6,12 +6,18 @@
 // needs must come from the pre-allocated pool (see PTHREAD_POOL_SIZE in scripts/build.sh). Page and AudioWorklet talk to the
 // emulator only through the shared-memory struct returned by gb3ds_state(): frames, stats and the
 // audio ring are read from it, input is written into it.
+#include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <fstream>
+#include <memory>
+#include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -23,7 +29,17 @@
 
 #include "common/file_util.h"
 #include "common/settings.h"
+#include "core/cheats/cheats.h"
+#include "core/cheats/gateway_cheat.h"
+#include "core/core.h"
+#include "core/frontend/camera/factory.h"
+#include "core/hle/service/cam/cam.h"
 #include "libretro.h"
+
+struct retro_microphone {
+    std::atomic<bool> active{false};
+    unsigned rate = 48000;
+};
 
 namespace OpenGL {
 extern int g_web_stream_mode; // gl_stream_buffer.cpp
@@ -72,6 +88,183 @@ std::vector<uint32_t> g_fb(kMaxFbPixels);
 std::vector<int16_t> g_audio_ring(kAudioRingFrames * 2);
 std::unordered_map<std::string, std::string> g_vars;
 
+constexpr int kCameraWidth = 320;
+constexpr int kCameraHeight = 240;
+struct SharedCamera {
+    std::atomic<int32_t> lock{0};
+    std::atomic<int32_t> available{0};
+    std::array<uint8_t, kCameraWidth * kCameraHeight * 4> rgba{};
+};
+static_assert(offsetof(SharedCamera, rgba) == 8);
+SharedCamera g_camera;
+retro_microphone g_microphone;
+
+EM_JS(int, gb3ds_read_microphone, (int16_t* output, size_t count), {
+    const mic = self.__gb3dsMic;
+    if (!mic || !Atomics.load(mic.control, 2)) return 0;
+    const write = Atomics.load(mic.control, 0) >>> 0;
+    let read = Atomics.load(mic.control, 1) >>> 0;
+    const available = (write - read) >>> 0;
+    const n = Math.min(count, available, mic.samples.length);
+    for (let i = 0; i < n; i++) {
+        HEAP16[(output >> 1) + i] = mic.samples[(read + i) % mic.samples.length];
+    }
+    read = (read + n) >>> 0;
+    Atomics.store(mic.control, 1, read);
+    return n;
+});
+
+EM_JS(void, gb3ds_set_microphone_active, (int active), {
+    const mic = self.__gb3dsMic;
+    if (!mic || Atomics.load(mic.control, 2) === active) return;
+    if (!active) Atomics.store(mic.control, 1, Atomics.load(mic.control, 0));
+    Atomics.store(mic.control, 2, active);
+});
+
+retro_microphone_t* OpenMicrophone(const retro_microphone_params_t* params) {
+    if (params && params->rate && params->rate != 48000) return nullptr;
+    g_microphone.active = false;
+    return &g_microphone;
+}
+
+void CloseMicrophone(retro_microphone_t* mic) {
+    if (mic != &g_microphone) return;
+    g_microphone.active = false;
+}
+
+bool GetMicrophoneParams(const retro_microphone_t* mic, retro_microphone_params_t* params) {
+    if (mic != &g_microphone || !params) return false;
+    params->rate = g_microphone.rate;
+    return true;
+}
+
+bool SetMicrophoneState(retro_microphone_t* mic, bool active) {
+    if (mic != &g_microphone) return false;
+    g_microphone.active = active;
+    return true;
+}
+
+bool GetMicrophoneState(const retro_microphone_t* mic) {
+    return mic == &g_microphone && g_microphone.active;
+}
+
+int ReadMicrophone(retro_microphone_t* mic, int16_t* samples, size_t count) {
+    if (mic != &g_microphone || !samples) return -1;
+    return g_microphone.active ? gb3ds_read_microphone(samples, count) : 0;
+}
+
+class WebCamera final : public Camera::CameraInterface {
+public:
+    explicit WebCamera(Service::CAM::Flip flip) : basic_flip(flip) {}
+
+    void StartCapture() override {}
+    void StopCapture() override {}
+    void SetResolution(const Service::CAM::Resolution& resolution) override {
+        std::lock_guard lock{config_mutex};
+        width = resolution.width;
+        height = resolution.height;
+    }
+    void SetFlip(Service::CAM::Flip value) override {
+        std::lock_guard lock{config_mutex};
+        flip = value;
+    }
+    void SetEffect(Service::CAM::Effect effect) override {
+        if (effect != Service::CAM::Effect::NoEffect) {
+            std::printf("[gaemboy] effetto fotocamera %d non supportato\n",
+                        static_cast<int>(effect));
+        }
+    }
+    void SetFormat(Service::CAM::OutputFormat value) override {
+        std::lock_guard lock{config_mutex};
+        format = value;
+    }
+    void SetFrameRate(Service::CAM::FrameRate) override {}
+    bool IsPreviewAvailable() override {
+        return g_camera.available.load(std::memory_order_acquire) != 0;
+    }
+
+    std::vector<u16> ReceiveFrame() override {
+        int w, h;
+        Service::CAM::Flip current_flip;
+        Service::CAM::OutputFormat current_format;
+        {
+            std::lock_guard lock{config_mutex};
+            w = width;
+            h = height;
+            current_flip = flip;
+            current_format = format;
+        }
+        if (w <= 0 || h <= 0 || w > 1024 || h > 1024) return {};
+        const bool rgb = current_format == Service::CAM::OutputFormat::RGB565;
+        std::vector<u16> output(static_cast<size_t>(w) * h, rgb ? 0 : 0x8000);
+        if (!g_camera.available.load(std::memory_order_acquire)) return output;
+
+        std::vector<uint8_t> pixels(g_camera.rgba.size());
+        int32_t expected = 0;
+        if (!g_camera.lock.compare_exchange_strong(expected, 1, std::memory_order_acquire))
+            return output;
+        std::copy(g_camera.rgba.begin(), g_camera.rgba.end(), pixels.begin());
+        g_camera.lock.store(0, std::memory_order_release);
+
+        const auto horizontal = [](Service::CAM::Flip f) {
+            return f == Service::CAM::Flip::Horizontal || f == Service::CAM::Flip::Reverse;
+        };
+        const auto vertical = [](Service::CAM::Flip f) {
+            return f == Service::CAM::Flip::Vertical || f == Service::CAM::Flip::Reverse;
+        };
+        const bool flip_x = horizontal(basic_flip) != horizontal(current_flip);
+        const bool flip_y = vertical(basic_flip) != vertical(current_flip);
+        const auto pixel = [&](int x, int y) {
+            const int sx = (flip_x ? w - 1 - x : x) * kCameraWidth / w;
+            const int sy = (flip_y ? h - 1 - y : y) * kCameraHeight / h;
+            const size_t pos = (static_cast<size_t>(sy) * kCameraWidth + sx) * 4;
+            return std::array<int, 3>{pixels[pos], pixels[pos + 1], pixels[pos + 2]};
+        };
+        const auto clamp = [](int v) { return std::clamp(v, 0, 255); };
+        const auto yuv = [&](const std::array<int, 3>& p) {
+            const int r = p[0], g = p[1], b = p[2];
+            return std::array<int, 3>{
+                clamp((77 * r + 150 * g + 29 * b + 128) >> 8),
+                clamp(((-43 * r - 85 * g + 128 * b + 128) >> 8) + 128),
+                clamp(((128 * r - 107 * g - 21 * b + 128) >> 8) + 128)};
+        };
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; x += rgb ? 1 : 2) {
+                const auto p = pixel(x, y);
+                const size_t pos = static_cast<size_t>(y) * w + x;
+                if (rgb) {
+                    output[pos] = static_cast<u16>(((p[0] >> 3) << 11) |
+                                                   ((p[1] >> 2) << 5) | (p[2] >> 3));
+                } else if (x + 1 < w) {
+                    const auto a = yuv(p);
+                    const auto b = yuv(pixel(x + 1, y));
+                    output[pos] = static_cast<u16>(a[0] | (((a[1] + b[1]) / 2) << 8));
+                    output[pos + 1] = static_cast<u16>(b[0] | (((a[2] + b[2]) / 2) << 8));
+                } else {
+                    output[pos] = static_cast<u16>(yuv(p)[0] | 0x8000);
+                }
+            }
+        }
+        return output;
+    }
+
+private:
+    std::mutex config_mutex;
+    int width = 0;
+    int height = 0;
+    const Service::CAM::Flip basic_flip;
+    Service::CAM::Flip flip = Service::CAM::Flip::NoFlip;
+    Service::CAM::OutputFormat format = Service::CAM::OutputFormat::YUV422;
+};
+
+class WebCameraFactory final : public Camera::CameraFactory {
+public:
+    std::unique_ptr<Camera::CameraInterface> Create(const std::string&,
+                                                    const Service::CAM::Flip& flip) override {
+        return std::make_unique<WebCamera>(flip);
+    }
+};
+
 void SetMessage(const char* msg) {
     std::snprintf(g_state.message, sizeof(g_state.message), "%s", msg);
     g_state.message_seq++;
@@ -116,6 +309,13 @@ bool EnvironmentCb(unsigned cmd, void* data) {
     case RETRO_ENVIRONMENT_GET_LOG_INTERFACE:
         static_cast<retro_log_callback*>(data)->log = LogCb;
         return true;
+    case RETRO_ENVIRONMENT_GET_MICROPHONE_INTERFACE & ~RETRO_ENVIRONMENT_EXPERIMENTAL: {
+        auto* mic = static_cast<retro_microphone_interface*>(data);
+        if (mic->interface_version != RETRO_MICROPHONE_INTERFACE_VERSION) return false;
+        *mic = {RETRO_MICROPHONE_INTERFACE_VERSION, OpenMicrophone, CloseMicrophone,
+                GetMicrophoneParams, SetMicrophoneState, GetMicrophoneState, ReadMicrophone};
+        return true;
+    }
     case RETRO_ENVIRONMENT_SET_MESSAGE:
         SetMessage(static_cast<const retro_message*>(data)->msg);
         return true;
@@ -266,6 +466,7 @@ extern "C" EMSCRIPTEN_KEEPALIVE void gb3ds_tick() {
 }
 
 void StepFrame(void*) {
+    gb3ds_set_microphone_active(g_microphone.active.load() ? 1 : 0);
     const auto t0 = clock_t_gb::now();
     retro_run();
     const auto t1 = clock_t_gb::now();
@@ -335,6 +536,22 @@ int RunIoSelfTest(const char* path) {
     return ok == checked ? 0 : 1;
 }
 
+bool GameRunning() {
+    return g_state.status.load() == 2 && Core::System::GetInstance().IsPoweredOn();
+}
+
+std::shared_ptr<Cheats::CheatBase> GetCheat(int index) {
+    if (!GameRunning() || index < 0) return {};
+    const auto cheats = Core::System::GetInstance().CheatEngine().GetCheats();
+    return static_cast<size_t>(index) < cheats.size() ? cheats[index] : nullptr;
+}
+
+bool IsHex(char c) {
+    return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+}
+
+std::string g_cheat_string;
+
 } // namespace
 
 extern "C" {
@@ -345,6 +562,144 @@ EMSCRIPTEN_KEEPALIVE SharedState* gb3ds_state() {
 
 EMSCRIPTEN_KEEPALIVE int gb3ds_state_size() {
     return static_cast<int>(sizeof(SharedState));
+}
+
+EMSCRIPTEN_KEEPALIVE SharedCamera* gb3ds_camera_buffer() {
+    return &g_camera;
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_microphone_active() {
+    return g_microphone.active ? 1 : 0;
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_save_state_file(const char* path) {
+    if (!GameRunning() || !path) return 0;
+    constexpr size_t max_size = 512 * 1024 * 1024;
+    try {
+        const size_t size = retro_serialize_size();
+        if (size == 0 || size > max_size) {
+            std::fprintf(stderr, "[gaemboy] save state non disponibile o troppo grande\n");
+            return 0;
+        }
+        std::vector<uint8_t> data(size);
+        if (!retro_serialize(data.data(), data.size())) return 0;
+        std::ofstream file(path, std::ios::binary | std::ios::trunc);
+        if (!file) return 0;
+        file.write(reinterpret_cast<const char*>(data.data()), data.size());
+        file.close();
+        return file ? 1 : 0;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[gaemboy] errore save state: %s\n", e.what());
+        return 0;
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_load_state_file(const char* path) {
+    if (!GameRunning() || !path) return 0;
+    constexpr size_t max_size = 512 * 1024 * 1024;
+    try {
+        std::ifstream file(path, std::ios::binary | std::ios::ate);
+        if (!file) return 0;
+        const auto size = file.tellg();
+        if (size <= 0 || static_cast<size_t>(size) > max_size) return 0;
+        std::vector<uint8_t> data(static_cast<size_t>(size));
+        file.seekg(0);
+        if (!file.read(reinterpret_cast<char*>(data.data()), size)) return 0;
+        return retro_unserialize(data.data(), data.size()) ? 1 : 0;
+    } catch (const std::exception& e) {
+        std::fprintf(stderr, "[gaemboy] errore caricamento save state: %s\n", e.what());
+        return 0;
+    }
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_cheat_count() {
+    if (!GameRunning()) return -1;
+    return static_cast<int>(Core::System::GetInstance().CheatEngine().GetCheats().size());
+}
+
+EMSCRIPTEN_KEEPALIVE const char* gb3ds_cheat_name(int index) {
+    const auto cheat = GetCheat(index);
+    if (!cheat) return nullptr;
+    g_cheat_string = cheat->GetName();
+    return g_cheat_string.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE const char* gb3ds_cheat_code(int index) {
+    const auto cheat = GetCheat(index);
+    if (!cheat) return nullptr;
+    g_cheat_string = cheat->GetCode();
+    return g_cheat_string.c_str();
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_cheat_enabled(int index) {
+    const auto cheat = GetCheat(index);
+    return cheat ? static_cast<int>(cheat->IsEnabled()) : -1;
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_cheat_add(const char* name, const char* code, int enabled) {
+    if (!GameRunning() || !name || !code) return 0;
+    const std::string cheat_name(name);
+    if (cheat_name.empty() || cheat_name.size() > 512 ||
+        cheat_name.find_first_of("[]\r\n") != std::string::npos ||
+        std::strlen(code) > 65536) return 0;
+    std::istringstream input(code);
+    std::vector<Cheats::GatewayCheat::CheatLine> lines;
+    std::string line;
+    while (std::getline(input, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.empty()) continue;
+        if (lines.size() >= 256 || line.size() != 17 || line[8] != ' ' ||
+            !std::all_of(line.begin(), line.begin() + 8, IsHex) ||
+            !std::all_of(line.begin() + 9, line.end(), IsHex)) return 0;
+        lines.emplace_back(line);
+        if (!lines.back().valid) return 0;
+    }
+    if (lines.empty()) return 0;
+    for (size_t i = 0; i < lines.size(); ++i) {
+        const auto type = static_cast<int>(lines[i].type);
+        if (type == static_cast<int>(Cheats::GatewayCheat::CheatType::Patch)) {
+            const size_t data_lines = (static_cast<size_t>(lines[i].value) + 7) / 8;
+            if (data_lines > lines.size() - i - 1) return 0;
+            i += data_lines;
+        } else if (type > 0x0C && (type < 0xD0 || type > 0xDD)) {
+            return 0;
+        } else if (type == static_cast<int>(Cheats::GatewayCheat::CheatType::Loop) &&
+                   lines[i].value > 4096) {
+            return 0;
+        }
+    }
+    if (enabled < 0) return 1;
+    auto cheat = std::make_shared<Cheats::GatewayCheat>(cheat_name, std::move(lines), "");
+    cheat->SetEnabled(enabled != 0);
+    std::shared_ptr<Cheats::CheatBase> base = std::move(cheat);
+    Core::System::GetInstance().CheatEngine().AddCheat(std::move(base));
+    return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_cheat_set_enabled(int index, int enabled) {
+    const auto cheat = GetCheat(index);
+    if (!cheat) return 0;
+    auto replacement =
+        std::make_shared<Cheats::GatewayCheat>(cheat->GetName(), cheat->GetCode(),
+                                               cheat->GetComments());
+    replacement->SetEnabled(enabled != 0);
+    std::shared_ptr<Cheats::CheatBase> base = std::move(replacement);
+    Core::System::GetInstance().CheatEngine().UpdateCheat(static_cast<size_t>(index),
+                                                          std::move(base));
+    return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_cheat_remove(int index) {
+    if (!GetCheat(index)) return 0;
+    Core::System::GetInstance().CheatEngine().RemoveCheat(static_cast<size_t>(index));
+    return 1;
+}
+
+EMSCRIPTEN_KEEPALIVE int gb3ds_cheat_clear() {
+    if (!GameRunning()) return 0;
+    auto& engine = Core::System::GetInstance().CheatEngine();
+    while (!engine.GetCheats().empty()) engine.RemoveCheat(engine.GetCheats().size() - 1);
+    return 1;
 }
 
 } // extern "C"
@@ -387,6 +742,8 @@ int main(int argc, char** argv) {
         return RunIoSelfTest(rom);
     }
 
+    Camera::RegisterFactory("web", std::make_unique<WebCameraFactory>());
+    Settings::values.camera_name.fill("web");
     retro_set_environment(EnvironmentCb);
     retro_set_video_refresh(VideoRefreshCb);
     retro_set_audio_sample_batch(AudioBatchCb);

@@ -1,3 +1,25 @@
+diff --git a/src/audio_core/libretro_input.cpp b/src/audio_core/libretro_input.cpp
+index 77a0aeb..7b48706 100644
+--- a/src/audio_core/libretro_input.cpp
++++ b/src/audio_core/libretro_input.cpp
+@@ -64 +64,5 @@ struct LibRetroInput::Impl {
++#ifdef __EMSCRIPTEN__
++        // The web frontend reads without blocking and must drain a full frame of 48 kHz audio.
++        read_buffer.resize(4096);
++#else
+         // Keep this small enough that RetroArch's microphone_driver_read can
+@@ -72,2 +76,3 @@ struct LibRetroInput::Impl {
+         read_buffer.resize(128);
++#endif
+     }
+@@ -178,3 +183,7 @@ void LibRetroInput::StartSampling(const InputParameters& params) {
+     // read can hang because the CoreAudio callback hasn't fired yet.
++#ifdef __EMSCRIPTEN__
++    impl->warmup_frames = 0;
++#else
+     impl->warmup_frames = 10;
++#endif
+     LOG_INFO(Audio, "LibRetro microphone sampling started at {} Hz, {} bit", params.sample_rate,
 diff --git a/CMakeLists.txt b/CMakeLists.txt
 index e99de6a..dccab90 100644
 --- a/CMakeLists.txt
