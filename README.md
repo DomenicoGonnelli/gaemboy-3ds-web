@@ -28,6 +28,13 @@ The full development log, with benchmarks, problems found and fixes, is in Itali
 
 ## Emulator features
 
+- **Game library from a local folder:** choose a folder containing games (subfolders included).
+  The games are never copied into the browser or uploaded: only the list is stored, and a game is
+  read lazily from the folder when it is launched. Saves, states and cheats stay in the browser.
+  Press *Aggiorna* after adding games. Chromium browsers remember the folder (they may ask for
+  permission again after a reload); Safari and Firefox use a folder selector whose access lasts
+  only for the page session, so the folder must be selected again after a reload. To launch
+  another game, reload the page.
 - **Save states:** three slots per game file. Load, overwrite or delete them in the page.
   States may be incompatible with another game or core version; keep normal in-game saves too.
   Slots use a fingerprint of the file size and sampled contents, not a full-file hash.
@@ -65,7 +72,7 @@ azahar-web/scripts/build.sh               # -> azahar-web/dist/
 python3 azahar-web/scripts/serve.py 8766  # http://localhost:8766/
 ```
 
-The focused archive and microphone tests can be run with Node.js 22.7 or later:
+The focused archive, library and microphone tests can be run with Node.js 22.7 or later:
 
 ```sh
 node --test azahar-web/tests/*.test.mjs

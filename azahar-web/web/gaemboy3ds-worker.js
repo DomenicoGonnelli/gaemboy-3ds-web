@@ -1,8 +1,8 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=16';
-import { createSaveArchive } from './gaemboy3ds-archive.js?v=16';
+import createGaemboy3DS from './gaemboy3ds.js?v=17';
+import { createSaveArchive } from './gaemboy3ds-archive.js?v=17';
 const ASSET_VERSION = '16';
 
 const SAVES = '/gaemboy/3ds/saves';

@@ -43,6 +43,12 @@
   .cheat-item { border-top: 1px solid #39414b; padding-top: 8px; }
   .cheat-item pre { white-space: pre-wrap; overflow-wrap: anywhere; }
   #feature-status { min-height: 1.4em; }
+  #library { margin-top: 0; margin-bottom: 12px; }
+  #lib-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 280px; overflow: auto; }
+  #lib-list li { display: flex; align-items: center; gap: 10px; border-top: 1px solid #2a2f36; padding: 5px 0; }
+  #lib-list li button { margin: 0; padding: 5px 12px; font-size: .85rem; }
+  #lib-list .game { flex: 1; overflow-wrap: anywhere; font-size: .85rem; }
+  #lib-list .meta { color: #9aa0a6; font-size: .75rem; white-space: nowrap; }
 </style>
 </head>
 <body>
@@ -61,6 +67,22 @@
 </div>
 <div id="notice" hidden></div>
 <div id="rom-info"></div>
+<section class="features" id="library" aria-label="Libreria giochi">
+  <details open>
+    <summary>Libreria giochi (cartella locale)</summary>
+    <fieldset id="library-actions">
+      <button id="lib-pick" type="button">Scegli cartella giochi…</button><input id="lib-dir" type="file" webkitdirectory multiple>
+      <button id="lib-refresh" type="button" class="alt" disabled>Aggiorna</button>
+      <button id="lib-forget" type="button" class="alt" disabled>Dimentica cartella</button>
+      <input id="lib-filter" type="search" placeholder="Cerca" aria-label="Cerca nella libreria" hidden>
+      <div id="lib-status" role="status" aria-live="polite"></div>
+      <ul id="lib-list"></ul>
+    </fieldset>
+    <p id="lib-help">I giochi restano nella cartella: il browser memorizza solo l'elenco e, al momento dell'avvio, legge il file
+      a blocchi senza copiarlo né caricarlo online. Salvataggi, stati e cheat restano invece nel browser.
+      Dopo aver aggiunto giochi alla cartella premi <b>Aggiorna</b>.</p>
+  </details>
+</section>
 <div class="row">
   <canvas id="screen" width="400" height="480"></canvas>
   <div>
@@ -84,7 +106,7 @@
       <kbd>Q</kbd>/<kbd>W</kbd> L/R · <kbd>E</kbd>/<kbd>R</kbd> ZL/ZR · <kbd>Invio</kbd> Start · <kbd>⌫</kbd> Select ·
       <kbd>I J K L</kbd> Circle Pad · <kbd>T F G H</kbd> C-Stick<br>
       <b>Gamepad</b>: tasti per posizione come sul 3DS (destra = A, basso = B), stick sinistro = Circle Pad, destro = C-Stick, grilletti = ZL/ZR.<br>
-      <b>Touch</b>: mouse o dito sullo schermo inferiore. Per cambiare gioco ricarica la pagina.
+      <b>Touch</b>: mouse o dito sullo schermo inferiore. Per cambiare gioco ricarica la pagina (la libreria resta disponibile).
     </div>
   </div>
 </div>
@@ -159,6 +181,6 @@
     sessionStorage.removeItem('coi-reload');
   }
 </script>
-<script type="module" src="./gaemboy3ds-page.js?v=16"></script>
+<script type="module" src="./gaemboy3ds-page.js?v=17"></script>
 </body>
 </html>

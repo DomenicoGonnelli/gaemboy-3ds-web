@@ -8,6 +8,10 @@ const OFF = {
   message: 76, analogRX: 332, analogRY: 336, audioRingPtr: 340, audioRingFrames: 344,
   audioWrite: 348, audioRead: 352, audioDropped: 356,
 };
+import {
+  forgetRootHandle, gamesFromFileList, loadRootHandle, metadataOf, openGame, saveRootHandle, scanDirectoryHandle,
+} from './gaemboy3ds-library.js?v=17';
+
 const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
 const NATIVE_FPS = 59.83;
@@ -244,7 +248,9 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=16', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=17', { type: 'module' });
+  renderLibrary();
+  if (library) libStatus('Gioco avviato. Per avviarne un altro ricarica la pagina.');
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
@@ -504,6 +510,174 @@ function downloadLog() {
 }
 $('dl-log').onclick = downloadLog;
 
+// ---------------------------------------------------------------- local game library
+// Chromium keeps a FileSystemDirectoryHandle (permission may be asked again after a reload);
+// Safari/Firefox use <input webkitdirectory>, whose files must be selected again on each visit.
+const LIB_META_KEY = 'gb3ds-library-meta';
+const LIB_LAST_KEY = 'gb3ds-library-last';
+const hasDirectoryPicker = typeof window.showDirectoryPicker === 'function';
+let library = null; // { folderName, games, truncated, live }
+let rootHandle = null;
+
+function libStatus(text, error = false) {
+  $('lib-status').textContent = text;
+  $('lib-status').className = error ? 'bad' : '';
+}
+
+function formatSize(bytes) {
+  return bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(2)} GB` : `${(bytes / 1048576).toFixed(1)} MB`;
+}
+
+function renderLibrary() {
+  const list = $('lib-list');
+  list.replaceChildren();
+  $('lib-forget').disabled = !library && !rootHandle;
+  $('lib-refresh').disabled = !library && !rootHandle;
+  if (!library) return;
+  $('lib-filter').hidden = library.games.length < 8;
+  const query = $('lib-filter').value.trim().toLowerCase();
+  const last = localStorage.getItem(LIB_LAST_KEY);
+  for (const game of library.games) {
+    if (query && !game.path.toLowerCase().includes(query)) continue;
+    const item = document.createElement('li');
+    const play = document.createElement('button');
+    play.type = 'button';
+    play.textContent = 'Gioca';
+    play.disabled = !library.live || !!worker;
+    play.onclick = () => launchGame(game);
+    const label = document.createElement('span');
+    label.className = 'game';
+    label.textContent = game.path + (game.path === last ? '  · ultimo avviato' : '');
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = formatSize(game.size);
+    item.append(play, label, meta);
+    list.append(item);
+  }
+}
+
+function showLibrary(result, live) {
+  library = { ...result, live };
+  const count = result.games.length;
+  const where = result.folderName ? `«${result.folderName}»` : 'la cartella';
+  let text = count ? `${count} ${count === 1 ? 'gioco' : 'giochi'} in ${where}.` : `Nessun gioco 3DS trovato in ${where}.`;
+  if (result.truncated) text += ' Elenco limitato ai primi 2000 file.';
+  if (!live) {
+    text += hasDirectoryPicker
+      ? ' Premi «Riconnetti cartella» per consentire di nuovo la lettura.'
+      : ' Il browser non conserva l\'accesso alla cartella: premi «Riseleziona cartella» per giocare.';
+  }
+  else if (!hasDirectoryPicker) text += ' Per vedere nuovi giochi premi «Aggiorna» e riseleziona la stessa cartella.';
+  if (worker) text += ' Per avviare un altro gioco ricarica la pagina.';
+  libStatus(text);
+  try {
+    localStorage.setItem(LIB_META_KEY, JSON.stringify(metadataOf(result)));
+  } catch { /* metadata only: the library still works for this session */ }
+  renderLibrary();
+}
+
+async function scanRoot(requestAccess) {
+  if (!rootHandle) return;
+  let permission = await rootHandle.queryPermission({ mode: 'read' });
+  if (permission !== 'granted' && requestAccess) permission = await rootHandle.requestPermission({ mode: 'read' });
+  if (permission !== 'granted') {
+    $('lib-refresh').textContent = 'Riconnetti cartella';
+    const saved = readSavedMetadata();
+    if (saved) showLibrary(saved, false);
+    else libStatus(`Cartella «${rootHandle.name}» memorizzata: premi «Riconnetti cartella» per leggerla.`);
+    renderLibrary();
+    return;
+  }
+  $('lib-refresh').textContent = 'Aggiorna';
+  libStatus('Lettura della cartella…');
+  showLibrary(await scanDirectoryHandle(rootHandle), true);
+}
+
+function readSavedMetadata() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LIB_META_KEY) || 'null');
+    return saved && Array.isArray(saved.games) ? saved : null;
+  } catch {
+    return null;
+  }
+}
+
+async function pickFolder() {
+  if (!hasDirectoryPicker) {
+    $('lib-dir').value = '';
+    $('lib-dir').click();
+    return;
+  }
+  try {
+    const handle = await window.showDirectoryPicker({ id: 'gb3ds-games', mode: 'read' });
+    rootHandle = handle;
+    try {
+      await saveRootHandle(handle);
+    } catch (err) {
+      libStatus(`La cartella non potrà essere ricordata dopo il ricaricamento: ${err.message}`, true);
+    }
+    await scanRoot(true);
+  } catch (err) {
+    if (err.name !== 'AbortError') libStatus(`Impossibile leggere la cartella: ${err.message}`, true);
+  }
+}
+
+async function launchGame(game) {
+  if (worker) return;
+  ensureAudio();
+  try {
+    const file = await openGame(game);
+    localStorage.setItem(LIB_LAST_KEY, game.path);
+    boot(file);
+  } catch (err) {
+    const missing = err.name === 'NotFoundError' || err.name === 'NotReadableError';
+    libStatus(missing
+      ? `«${game.path}» non è più leggibile (spostato, rinominato o modificato): premi «${$('lib-refresh').textContent}».`
+      : `Impossibile aprire «${game.path}»: ${err.message}`, true);
+  }
+}
+
+$('lib-pick').onclick = pickFolder;
+$('lib-dir').onchange = (e) => {
+  if (!e.target.files.length) return;
+  $('lib-refresh').textContent = 'Aggiorna';
+  showLibrary(gamesFromFileList(e.target.files), true);
+};
+$('lib-refresh').onclick = () => {
+  if (rootHandle) scanRoot(true).catch((err) => libStatus(`Impossibile leggere la cartella: ${err.message}`, true));
+  else pickFolder();
+};
+$('lib-forget').onclick = async () => {
+  try {
+    await forgetRootHandle();
+  } catch { /* nothing stored */ }
+  localStorage.removeItem(LIB_META_KEY);
+  localStorage.removeItem(LIB_LAST_KEY);
+  rootHandle = null;
+  library = null;
+  $('lib-dir').value = '';
+  $('lib-refresh').textContent = 'Aggiorna';
+  $('lib-filter').hidden = true;
+  libStatus('Cartella dimenticata. I salvataggi nel browser non sono stati toccati.');
+  renderLibrary();
+};
+$('lib-filter').oninput = renderLibrary;
+
+(async function restoreLibrary() {
+  if (!hasDirectoryPicker) {
+    $('lib-refresh').textContent = 'Riseleziona cartella';
+    const saved = readSavedMetadata();
+    if (saved) showLibrary(saved, false);
+    return;
+  }
+  try {
+    rootHandle = (await loadRootHandle()) || null;
+    await scanRoot(false);
+  } catch (err) {
+    libStatus(`Impossibile ripristinare la cartella: ${err.message}`, true);
+  }
+})();
+
 // ---------------------------------------------------------------- UI
 async function startDemo(name) {
   ensureAudio();
@@ -631,7 +805,7 @@ async function startMicrophone() {
   microphoneStream = stream;
   try {
     microphoneContext = new AudioContext({ latencyHint: 'interactive' });
-    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=16');
+    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=17');
     if (!pageActive) throw new Error('Pagina chiusa.');
     microphoneBuffer = new SharedArrayBuffer(12 + 65536 * 2);
     microphoneNode = new AudioWorkletNode(microphoneContext, 'gaemboy3ds-microphone', {
