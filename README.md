@@ -33,7 +33,8 @@ The full development log, with benchmarks, problems found and fixes, is in Itali
   read lazily from the folder when it is launched. Saves, states and cheats stay in the browser.
   Press *Aggiorna* after adding games. Chromium browsers remember the folder (they may ask for
   permission again after a reload); Safari and Firefox use a folder selector whose access lasts
-  only for the page session, so the folder must be selected again after a reload. To launch
+  only for the page session: after a reload, *Gioca* opens the folder selector and launches the
+  game once the same folder is confirmed (browsers cannot preselect the folder path). To launch
   another game, reload the page.
 - **Save states:** three slots per game file. Load, overwrite or delete them in the page.
   States may be incompatible with another game or core version; keep normal in-game saves too.

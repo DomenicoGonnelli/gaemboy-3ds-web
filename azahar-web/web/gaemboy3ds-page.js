@@ -10,7 +10,7 @@ const OFF = {
 };
 import {
   forgetRootHandle, gamesFromFileList, loadRootHandle, metadataOf, openGame, saveRootHandle, scanDirectoryHandle,
-} from './gaemboy3ds-library.js?v=17';
+} from './gaemboy3ds-library.js?v=18';
 
 const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
@@ -248,7 +248,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=17', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=18', { type: 'module' });
   renderLibrary();
   if (library) libStatus('Gioco avviato. Per avviarne un altro ricarica la pagina.');
   worker.onerror = (e) => {
@@ -518,6 +518,7 @@ const LIB_LAST_KEY = 'gb3ds-library-last';
 const hasDirectoryPicker = typeof window.showDirectoryPicker === 'function';
 let library = null; // { folderName, games, truncated, live }
 let rootHandle = null;
+let pendingGamePath = null; // game to launch once the folder is selected again (Safari/Firefox)
 
 function libStatus(text, error = false) {
   $('lib-status').textContent = text;
@@ -543,8 +544,11 @@ function renderLibrary() {
     const play = document.createElement('button');
     play.type = 'button';
     play.textContent = 'Gioca';
-    play.disabled = !library.live || !!worker;
-    play.onclick = () => launchGame(game);
+    play.disabled = !!worker;
+    if (!library.live) play.title = hasDirectoryPicker
+      ? 'Chiede di nuovo il permesso di lettura e avvia il gioco'
+      : 'Apre la scelta della cartella: conferma la stessa cartella e il gioco parte';
+    play.onclick = () => (library.live ? launchGame(game) : reconnectAndLaunch(game));
     const label = document.createElement('span');
     label.className = 'game';
     label.textContent = game.path + (game.path === last ? '  · ultimo avviato' : '');
@@ -565,7 +569,7 @@ function showLibrary(result, live) {
   if (!live) {
     text += hasDirectoryPicker
       ? ' Premi «Riconnetti cartella» per consentire di nuovo la lettura.'
-      : ' Il browser non conserva l\'accesso alla cartella: premi «Riseleziona cartella» per giocare.';
+      : ' Il browser non conserva l\'accesso alla cartella: premi «Gioca» e conferma la stessa cartella per avviare il gioco.';
   }
   else if (!hasDirectoryPicker) text += ' Per vedere nuovi giochi premi «Aggiorna» e riseleziona la stessa cartella.';
   if (worker) text += ' Per avviare un altro gioco ricarica la pagina.';
@@ -602,7 +606,40 @@ function readSavedMetadata() {
   }
 }
 
+// Browsers cannot reopen a folder without a user gesture, nor preselect its path in the dialog;
+// the click on «Gioca» provides the gesture, and macOS usually opens the last used folder.
+async function reconnectAndLaunch(game) {
+  if (worker) return;
+  ensureAudio();
+  if (!hasDirectoryPicker) {
+    pendingGamePath = game.path;
+    libStatus(`Conferma la cartella «${library.folderName || 'dei giochi'}» per avviare «${game.name}».`);
+    $('lib-dir').value = '';
+    $('lib-dir').click();
+    return;
+  }
+  if (!rootHandle) {
+    await pickFolder();
+  } else {
+    try {
+      await scanRoot(true);
+    } catch (err) {
+      libStatus(`Impossibile leggere la cartella: ${err.message}`, true);
+      return;
+    }
+  }
+  if (library?.live) launchFromLibrary(game.path, game.size);
+}
+
+function launchFromLibrary(path, size) {
+  const candidates = library.games.filter((g) => g.path === path);
+  const game = candidates.find((g) => g.size === size) || candidates[0];
+  if (game) launchGame(game);
+  else libStatus(`«${path}» non è presente nella cartella selezionata: scegli il gioco dall'elenco aggiornato.`, true);
+}
+
 async function pickFolder() {
+  pendingGamePath = null;
   if (!hasDirectoryPicker) {
     $('lib-dir').value = '';
     $('lib-dir').click();
@@ -639,10 +676,15 @@ async function launchGame(game) {
 
 $('lib-pick').onclick = pickFolder;
 $('lib-dir').onchange = (e) => {
+  const pending = pendingGamePath;
+  pendingGamePath = null;
   if (!e.target.files.length) return;
+  const previous = library?.games.find((g) => g.path === pending);
   $('lib-refresh').textContent = 'Aggiorna';
   showLibrary(gamesFromFileList(e.target.files), true);
+  if (pending) launchFromLibrary(pending, previous?.size);
 };
+$('lib-dir').addEventListener('cancel', () => { pendingGamePath = null; });
 $('lib-refresh').onclick = () => {
   if (rootHandle) scanRoot(true).catch((err) => libStatus(`Impossibile leggere la cartella: ${err.message}`, true));
   else pickFolder();
@@ -805,7 +847,7 @@ async function startMicrophone() {
   microphoneStream = stream;
   try {
     microphoneContext = new AudioContext({ latencyHint: 'interactive' });
-    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=17');
+    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=18');
     if (!pageActive) throw new Error('Pagina chiusa.');
     microphoneBuffer = new SharedArrayBuffer(12 + 65536 * 2);
     microphoneNode = new AudioWorkletNode(microphoneContext, 'gaemboy3ds-microphone', {
