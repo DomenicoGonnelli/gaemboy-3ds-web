@@ -1759,3 +1759,402 @@ index 972a248..b31a52d 100644
      return entry.r + entry.g * delta;
  }
  
+diff --git a/src/video_core/renderer_opengl/gl_shader_manager.cpp b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+index ef4159c..ed1d397 100644
+--- a/src/video_core/renderer_opengl/gl_shader_manager.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+@@ -293,6 +293,9 @@ public:
+             .has_gl_nv_fragment_shader_barycentric = false,
+             .is_vulkan = false,
+         };
++#ifdef __EMSCRIPTEN__
++        LoadWebShaderProgramCache();
++#endif
+     }
+ 
+     struct ShaderTuple {
+diff --git a/src/video_core/renderer_opengl/gl_shader_util.cpp b/src/video_core/renderer_opengl/gl_shader_util.cpp
+index 49882e0..541e6cf 100644
+--- a/src/video_core/renderer_opengl/gl_shader_util.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_util.cpp
+@@ -4,7 +4,12 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <cstdint>
++#include <cstdio>
++#include <fstream>
+ #include <string>
++#include <unordered_map>
++#include <unordered_set>
+ #include <vector>
+ #include <glad/glad.h>
+ #ifdef __EMSCRIPTEN__
+@@ -23,6 +28,162 @@ int g_web_shader_mode = 1;
+ 
+ namespace {
+ constexpr GLenum GL_COMPLETION_STATUS_KHR = 0x91B1;
++constexpr char WEB_SHADER_CACHE_PATH[] = "/gaemboy/3ds/saves/web-shader-cache-v1.bin";
++constexpr char WEB_SHADER_CACHE_TEMP_PATH[] = "/gaemboy/3ds/saves/web-shader-cache-v1.tmp";
++constexpr std::array<char, 8> WEB_SHADER_CACHE_MAGIC{'G', 'B', '3', 'D', 'S', 'S', 'C', '1'};
++constexpr std::size_t WEB_SHADER_CACHE_MAX_BYTES = 4 * 1024 * 1024;
++constexpr std::size_t WEB_SHADER_CACHE_MAX_ENTRIES = 256;
++constexpr std::size_t WEB_SHADER_CACHE_MAX_SOURCE_BYTES = 256 * 1024;
++constexpr std::size_t WEB_SHADER_CACHE_STARTUP_WARMUP = 24;
++constexpr std::size_t WEB_SHADER_CACHE_SYNC_WARMUP = 4;
++
++struct WebShaderSource {
++    GLenum type;
++    std::string source;
++};
++
++struct WebShaderProgramSource {
++    std::string vertex;
++    std::string fragment;
++    std::string key;
++};
++
++std::unordered_map<GLuint, WebShaderSource> web_shader_sources;
++std::unordered_map<GLuint, WebShaderProgramSource> web_pending_program_sources;
++std::unordered_map<std::string, GLuint> web_preloaded_programs;
++std::unordered_set<std::string> web_saved_programs;
++std::vector<WebShaderProgramSource> web_shader_cache_entries;
++std::size_t web_shader_cache_bytes = WEB_SHADER_CACHE_MAGIC.size();
++bool web_shader_cache_loaded = false;
++bool web_shader_cache_initialized = false;
++
++std::string MakeWebShaderProgramKey(std::string_view vertex, std::string_view fragment) {
++    std::string key;
++    const auto append = [&key](std::string_view source) {
++        const std::uint64_t length = source.size();
++        key.append(reinterpret_cast<const char*>(&length), sizeof(length));
++        key.append(source);
++    };
++    append(vertex);
++    append(fragment);
++    return key;
++}
++
++bool GetWebShaderProgramSource(std::span<const GLuint> shaders, WebShaderProgramSource& source) {
++    source.vertex.clear();
++    source.fragment.clear();
++    for (const GLuint shader : shaders) {
++        const auto it = web_shader_sources.find(shader);
++        if (it == web_shader_sources.end()) {
++            continue;
++        }
++        if (it->second.type == GL_VERTEX_SHADER) {
++            source.vertex = it->second.source;
++        } else if (it->second.type == GL_FRAGMENT_SHADER) {
++            source.fragment = it->second.source;
++        }
++    }
++    if (source.vertex.empty() || source.fragment.empty()) {
++        return false;
++    }
++    source.key = MakeWebShaderProgramKey(source.vertex, source.fragment);
++    return true;
++}
++
++void WriteWebShaderCacheEntry(std::ofstream& file, const WebShaderProgramSource& entry) {
++    const auto vertex_size = static_cast<std::uint32_t>(entry.vertex.size());
++    const auto fragment_size = static_cast<std::uint32_t>(entry.fragment.size());
++    file.write(reinterpret_cast<const char*>(&vertex_size), sizeof(vertex_size));
++    file.write(reinterpret_cast<const char*>(&fragment_size), sizeof(fragment_size));
++    file.write(entry.vertex.data(), static_cast<std::streamsize>(entry.vertex.size()));
++    file.write(entry.fragment.data(), static_cast<std::streamsize>(entry.fragment.size()));
++}
++
++void RewriteWebShaderCache() {
++    std::ofstream file(WEB_SHADER_CACHE_TEMP_PATH, std::ios::binary | std::ios::trunc);
++    if (!file) {
++        LOG_WARNING(Render_OpenGL, "Cannot write web shader cache");
++        return;
++    }
++    file.write(WEB_SHADER_CACHE_MAGIC.data(), WEB_SHADER_CACHE_MAGIC.size());
++    for (const auto& entry : web_shader_cache_entries) {
++        WriteWebShaderCacheEntry(file, entry);
++    }
++    file.close();
++    if (!file || std::rename(WEB_SHADER_CACHE_TEMP_PATH, WEB_SHADER_CACHE_PATH) != 0) {
++        LOG_WARNING(Render_OpenGL, "Cannot replace web shader cache");
++        return;
++    }
++    web_shader_cache_initialized = true;
++    web_shader_cache_bytes = WEB_SHADER_CACHE_MAGIC.size();
++    for (const auto& entry : web_shader_cache_entries) {
++        web_shader_cache_bytes += 2 * sizeof(u32) + entry.vertex.size() + entry.fragment.size();
++    }
++}
++
++void SaveWebShaderProgram(const WebShaderProgramSource& entry) {
++    if (!web_shader_cache_loaded && g_web_shader_mode == 1) {
++        LoadWebShaderProgramCache();
++    }
++    if (entry.vertex.size() > WEB_SHADER_CACHE_MAX_SOURCE_BYTES ||
++        entry.fragment.size() > WEB_SHADER_CACHE_MAX_SOURCE_BYTES ||
++        web_saved_programs.contains(entry.key)) {
++        return;
++    }
++
++    const std::size_t entry_bytes =
++        2 * sizeof(u32) + entry.vertex.size() + entry.fragment.size();
++    if (entry_bytes + WEB_SHADER_CACHE_MAGIC.size() > WEB_SHADER_CACHE_MAX_BYTES) {
++        return;
++    }
++
++    const bool must_rewrite =
++        web_shader_cache_bytes + entry_bytes > WEB_SHADER_CACHE_MAX_BYTES ||
++        web_shader_cache_entries.size() >= WEB_SHADER_CACHE_MAX_ENTRIES;
++    if (must_rewrite) {
++        while (!web_shader_cache_entries.empty() &&
++               (web_shader_cache_bytes + entry_bytes > WEB_SHADER_CACHE_MAX_BYTES ||
++                web_shader_cache_entries.size() >= WEB_SHADER_CACHE_MAX_ENTRIES)) {
++            web_saved_programs.erase(web_shader_cache_entries.front().key);
++            web_shader_cache_bytes -= 2 * sizeof(u32) +
++                                      web_shader_cache_entries.front().vertex.size() +
++                                      web_shader_cache_entries.front().fragment.size();
++            web_shader_cache_entries.erase(web_shader_cache_entries.begin());
++        }
++    }
++
++    if (must_rewrite) {
++        web_shader_cache_entries.push_back(entry);
++        web_saved_programs.insert(entry.key);
++        RewriteWebShaderCache();
++        return;
++    }
++
++    std::ofstream file(WEB_SHADER_CACHE_PATH,
++                       std::ios::binary |
++                           (web_shader_cache_initialized ? std::ios::app : std::ios::trunc));
++    if (!file) {
++        LOG_WARNING(Render_OpenGL, "Cannot open web shader cache for writing");
++        return;
++    }
++    if (!web_shader_cache_initialized) {
++        file.write(WEB_SHADER_CACHE_MAGIC.data(), WEB_SHADER_CACHE_MAGIC.size());
++        if (!file) {
++            LOG_WARNING(Render_OpenGL, "Cannot open web shader cache for writing");
++            return;
++        }
++        web_shader_cache_initialized = true;
++        web_shader_cache_bytes = WEB_SHADER_CACHE_MAGIC.size();
++    }
++    WriteWebShaderCacheEntry(file, entry);
++    if (!file) {
++        LOG_WARNING(Render_OpenGL, "Failed to write web shader cache entry");
++        return;
++    }
++    web_shader_cache_entries.push_back(entry);
++    web_saved_programs.insert(entry.key);
++    web_shader_cache_bytes += entry_bytes;
++}
+ 
+ void LogAttachedShaderErrors(GLuint program_id, const std::string& debug_name) {
+     std::array<GLuint, 4> attached{};
+@@ -87,6 +248,16 @@ void BindWebProgramResources(GLuint program_id) {
+ } // Anonymous namespace
+ 
+ GLuint LoadProgramDeferred(std::span<const GLuint> shaders) {
++    WebShaderProgramSource source;
++    if (GetWebShaderProgramSource(shaders, source)) {
++        const auto preloaded = web_preloaded_programs.find(source.key);
++        if (preloaded != web_preloaded_programs.end()) {
++            const GLuint program_id = preloaded->second;
++            web_preloaded_programs.erase(preloaded);
++            return program_id;
++        }
++    }
++
+     const GLuint program_id = glCreateProgram();
+     for (GLuint shader : shaders) {
+         if (shader != 0) {
+@@ -94,9 +265,126 @@ GLuint LoadProgramDeferred(std::span<const GLuint> shaders) {
+         }
+     }
+     glLinkProgram(program_id);
++    if (!source.key.empty()) {
++        web_pending_program_sources.insert_or_assign(program_id, std::move(source));
++    }
+     return program_id;
+ }
+ 
++void LoadWebShaderProgramCache() {
++    if (web_shader_cache_loaded || g_web_shader_mode != 1) {
++        return;
++    }
++    web_shader_cache_loaded = true;
++
++    std::ifstream file(WEB_SHADER_CACHE_PATH, std::ios::binary);
++    if (!file) {
++        return;
++    }
++
++    std::array<char, WEB_SHADER_CACHE_MAGIC.size()> magic{};
++    file.read(magic.data(), magic.size());
++    if (!file || magic != WEB_SHADER_CACHE_MAGIC) {
++        LOG_WARNING(Render_OpenGL, "Ignoring invalid web shader cache header");
++        web_shader_cache_initialized = false;
++        return;
++    }
++    web_shader_cache_initialized = true;
++    web_shader_cache_bytes = WEB_SHADER_CACHE_MAGIC.size();
++
++    bool rewrite_cache = false;
++    while (file && web_shader_cache_bytes < WEB_SHADER_CACHE_MAX_BYTES) {
++        std::uint32_t vertex_size = 0;
++        std::uint32_t fragment_size = 0;
++        file.read(reinterpret_cast<char*>(&vertex_size), sizeof(vertex_size));
++        if (file.gcount() == 0 && file.eof()) {
++            break;
++        }
++        if (file.gcount() != sizeof(vertex_size)) {
++            rewrite_cache = true;
++            break;
++        }
++        file.read(reinterpret_cast<char*>(&fragment_size), sizeof(fragment_size));
++        if (!file || vertex_size == 0 || fragment_size == 0 ||
++            vertex_size > WEB_SHADER_CACHE_MAX_SOURCE_BYTES ||
++            fragment_size > WEB_SHADER_CACHE_MAX_SOURCE_BYTES ||
++            web_shader_cache_bytes + 2 * sizeof(std::uint32_t) + vertex_size + fragment_size >
++                WEB_SHADER_CACHE_MAX_BYTES) {
++            LOG_WARNING(Render_OpenGL, "Ignoring invalid or truncated web shader cache entry");
++            rewrite_cache = true;
++            break;
++        }
++
++        WebShaderProgramSource entry;
++        entry.vertex.resize(vertex_size);
++        entry.fragment.resize(fragment_size);
++        file.read(entry.vertex.data(), vertex_size);
++        file.read(entry.fragment.data(), fragment_size);
++        if (!file) {
++            LOG_WARNING(Render_OpenGL, "Ignoring truncated web shader cache entry");
++            rewrite_cache = true;
++            break;
++        }
++        entry.key = MakeWebShaderProgramKey(entry.vertex, entry.fragment);
++
++        const auto duplicate = std::find_if(
++            web_shader_cache_entries.begin(), web_shader_cache_entries.end(),
++            [&entry](const WebShaderProgramSource& saved) { return saved.key == entry.key; });
++        if (duplicate != web_shader_cache_entries.end()) {
++            web_shader_cache_bytes -= 2 * sizeof(u32) + duplicate->vertex.size() +
++                                      duplicate->fragment.size();
++            web_shader_cache_entries.erase(duplicate);
++        } else {
++            web_saved_programs.insert(entry.key);
++        }
++        web_shader_cache_bytes += 2 * sizeof(u32) + entry.vertex.size() + entry.fragment.size();
++        web_shader_cache_entries.push_back(std::move(entry));
++        if (web_shader_cache_entries.size() > WEB_SHADER_CACHE_MAX_ENTRIES) {
++            web_saved_programs.erase(web_shader_cache_entries.front().key);
++            web_shader_cache_bytes -= 2 * sizeof(u32) +
++                                      web_shader_cache_entries.front().vertex.size() +
++                                      web_shader_cache_entries.front().fragment.size();
++            web_shader_cache_entries.erase(web_shader_cache_entries.begin());
++        }
++    }
++    if (web_shader_cache_bytes >= WEB_SHADER_CACHE_MAX_BYTES && file.peek() != EOF) {
++        rewrite_cache = true;
++    }
++    if (rewrite_cache) {
++        file.close();
++        RewriteWebShaderCache();
++    }
++
++    const std::size_t max_warmup =
++        HasParallelShaderCompile() ? WEB_SHADER_CACHE_STARTUP_WARMUP : WEB_SHADER_CACHE_SYNC_WARMUP;
++    const std::size_t warmup_start =
++        web_shader_cache_entries.size() > max_warmup
++            ? web_shader_cache_entries.size() - max_warmup
++            : 0;
++    std::size_t warmed = 0;
++    for (std::size_t i = warmup_start; i < web_shader_cache_entries.size(); ++i) {
++        const auto& entry = web_shader_cache_entries[i];
++        const GLuint vertex = LoadShader(entry.vertex, GL_VERTEX_SHADER, "web shader cache");
++        const GLuint fragment = LoadShader(entry.fragment, GL_FRAGMENT_SHADER, "web shader cache");
++        if (vertex == 0 || fragment == 0) {
++            continue;
++        }
++        const std::array shaders{vertex, fragment};
++        const GLuint program_id = glCreateProgram();
++        glAttachShader(program_id, vertex);
++        glAttachShader(program_id, fragment);
++        glLinkProgram(program_id);
++        web_preloaded_programs.insert_or_assign(entry.key, program_id);
++        web_shader_sources.erase(vertex);
++        web_shader_sources.erase(fragment);
++        warmed++;
++    }
++    if (warmed > 0) {
++        LOG_INFO(Render_OpenGL, "Queued {} previously seen web shader programs for warm-up",
++                 warmed);
++    }
++}
++
+ bool HasParallelShaderCompile() {
+     static const bool supported = emscripten_webgl_enable_extension(
+         emscripten_webgl_get_current_context(), "KHR_parallel_shader_compile");
+@@ -116,6 +404,7 @@ bool FinalizeProgram(GLuint program_id, const std::string& debug_name) {
+     GLint result = GL_FALSE;
+     glGetProgramiv(program_id, GL_LINK_STATUS, &result);
+     if (result != GL_TRUE) {
++        web_pending_program_sources.erase(program_id);
+         GLint length = 0;
+         glGetProgramiv(program_id, GL_INFO_LOG_LENGTH, &length);
+         std::vector<char> log(std::max<GLint>(length, 1));
+@@ -124,6 +413,11 @@ bool FinalizeProgram(GLuint program_id, const std::string& debug_name) {
+         LogAttachedShaderErrors(program_id, debug_name);
+         return false;
+     }
++    if (const auto source = web_pending_program_sources.find(program_id);
++        source != web_pending_program_sources.end()) {
++        SaveWebShaderProgram(source->second);
++        web_pending_program_sources.erase(source);
++    }
+     BindWebProgramResources(program_id);
+     return true;
+ }
+@@ -134,6 +428,7 @@ GLuint LoadShader(std::string_view source, GLenum type, const std::string& debug
+     if (type == GL_GEOMETRY_SHADER) {
+         return 0;
+     }
++    const std::string original_source(source);
+     std::string preamble = "#version 300 es\n#define fma(a, b, c) ((a) * (b) + (c))\n";
+     if (type == GL_FRAGMENT_SHADER) {
+         preamble += "precision highp float;\nprecision highp int;\n";
+@@ -254,6 +549,7 @@ GLuint LoadShader(std::string_view source, GLenum type, const std::string& debug
+     }
+ 
+     glShaderSource(shader_id, static_cast<GLsizei>(src_arr.size()), src_arr.data(), lengths.data());
++    web_shader_sources.insert_or_assign(shader_id, WebShaderSource{type, original_source});
+     LOG_DEBUG(Render_OpenGL, "Compiling {} shader {}...", debug_type, debug_name);
+     glCompileShader(shader_id);
+ #ifdef __EMSCRIPTEN__
+@@ -333,6 +629,10 @@ GLuint LoadProgram(bool separable_program, std::span<const GLuint> shaders,
+ #ifdef __EMSCRIPTEN__
+     if (result == GL_TRUE) {
+         BindWebProgramResources(program_id);
++        WebShaderProgramSource source;
++        if (GetWebShaderProgramSource(shaders, source)) {
++            SaveWebShaderProgram(source);
++        }
+     } else {
+         LogAttachedShaderErrors(program_id, debug_name);
+     }
+diff --git a/src/video_core/renderer_opengl/gl_shader_util.h b/src/video_core/renderer_opengl/gl_shader_util.h
+index d926059..c3b7664 100644
+--- a/src/video_core/renderer_opengl/gl_shader_util.h
++++ b/src/video_core/renderer_opengl/gl_shader_util.h
+@@ -36,6 +36,9 @@ extern int g_web_shader_mode;
+ /// Starts linking a program without any blocking status query (KHR_parallel_shader_compile).
+ GLuint LoadProgramDeferred(std::span<const GLuint> shaders);
+ 
++/// Loads previously seen web shader programs and queues them for compilation during startup.
++void LoadWebShaderProgramCache();
++
+ /// Whether the context exposes KHR_parallel_shader_compile (enables it on first call).
+ bool HasParallelShaderCompile();
+ 

@@ -1,7 +1,8 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=14';
+import createGaemboy3DS from './gaemboy3ds.js?v=15';
+const ASSET_VERSION = '15';
 
 const SAVES = '/gaemboy/3ds/saves';
 // libctru homebrew only start NDSP if sdmc:/3ds/dspfirm.cdc exists; Azahar's HLE DSP ignores
@@ -160,6 +161,8 @@ self.onmessage = async ({ data }) => {
   try {
     mod = await createGaemboy3DS({
       canvas: data.canvas || undefined,
+      locateFile: (path, prefix) =>
+        path.endsWith('.wasm') ? `${prefix}${path}?v=${ASSET_VERSION}` : `${prefix}${path}`,
       arguments: [`/rom/${romName}`, ...(data.extraArgs || [])],
       print: logLine,
       printErr: logLine,

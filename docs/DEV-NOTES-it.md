@@ -332,6 +332,10 @@ rasterizzazione e shader sulla GPU, ed è l'unica leva che può portare un gioco
    programma non è pronto, come la compilazione asincrona del backend Vulkan; i draw piccoli (≤ 6 vertici)
    aspettano comunque. Effetto collaterale possibile: per qualche frame manca un pezzo di geometria.
    `?shaders=sync` ripristina la compilazione sincrona, per confronto.
+   Le coppie di sorgenti dei programmi linkati con successo vengono salvate in IndexedDB, insieme ai
+   salvataggi, con un limite di 256 programmi / 4 MB. Al successivo avvio fino a 24 shader già visti
+   vengono ricompilati e collegati durante il caricamento; il primo avvio può ancora avere lag.
+   La cache rimane sul dispositivo e non viene caricata online.
 8. **Freeze di 0,4-1,9 s entrando/uscendo dalle scene**: in quei secondi GL, shader e file erano a zero. Il
    gioco carica e scarica moduli di codice (CRO, es. `LoadCRO "DllField"` con 3016 simboli) e
    `CROHelper::ApplyRelocation`/`ClearRelocation` invalidano la cache CPU **per ogni parola rilocata**.

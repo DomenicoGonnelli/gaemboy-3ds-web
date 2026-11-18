@@ -21,7 +21,7 @@ Proof of concept that works on desktop browsers.
 | Performance | On an Apple M2 Pro, homebrew and heavy commercial titles run at or near full speed in Chrome. |
 | Mobile | Phone browsers are too slow, because WebAssembly has no ARM JIT. Use a native Android build of Azahar instead. |
 | Formats | Decrypted `.3ds` / `.cci` / `.cxi` / `.app`, homebrew `.3dsx` / `.elf`. The file is read locally in chunks and never uploaded. |
-| Saves | Persisted in the browser (IndexedDB). |
+| Saves | Game saves and a bounded shader warm-up cache are persisted in the browser (IndexedDB). |
 
 The full development log, with benchmarks, problems found and fixes, is in Italian in
 [docs/DEV-NOTES-it.md](docs/DEV-NOTES-it.md).
@@ -76,7 +76,13 @@ azahar-web/scripts/deploy-pages.sh   # pushes dist/ to the gh-pages branch, reco
 
 Only redistributable demo homebrew (Craftus Reloaded, MIT) is published next to the build.
 
-URL options: `?sw` forces the software renderer, `?cpu=N` underclocks the emulated CPU (percent).
+URL options: `?sw` forces the software renderer, `?cpu=N` underclocks the emulated CPU (percent),
+and `?shaders=sync` disables the asynchronous shader path for troubleshooting.
+
+Successfully linked shader source pairs are kept locally in IndexedDB (up to 256 entries / 4 MB).
+On later launches, up to 24 previously seen programs are linked during startup, reducing the pauses
+when revisiting animated scenes. The first run can still stutter while it discovers shaders. This
+cache never leaves the browser.
 
 ## Source code for deployed builds
 
