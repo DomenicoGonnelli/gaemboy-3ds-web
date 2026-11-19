@@ -1,9 +1,9 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=23';
-import { createSaveArchive } from './gaemboy3ds-archive.js?v=23';
-const ASSET_VERSION = '23';
+import createGaemboy3DS from './gaemboy3ds.js?v=24';
+import { createSaveArchive } from './gaemboy3ds-archive.js?v=24';
+const ASSET_VERSION = '24';
 
 const SAVES = '/gaemboy/3ds/saves';
 // libctru homebrew only start NDSP if sdmc:/3ds/dspfirm.cdc exists; Azahar's HLE DSP ignores
@@ -400,6 +400,30 @@ async function command(action, data) {
   }
 }
 
+
+// iOS Safari sometimes cannot reserve the 1 GB shared WebAssembly memory right away (memory
+// pressure from other tabs or a just-closed session); the allocation fails before any module
+// side effect, so wait and retry before reporting a clear error.
+const MEMORY_RETRY_MS = [300, 700, 1500, 3000];
+async function createWithMemoryRetry(options) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const m = await createGaemboy3DS(options);
+      if (attempt) logLine(`[gaemboy] memoria allocata al tentativo ${attempt + 1}`);
+      return m;
+    } catch (err) {
+      const isMemory = err instanceof RangeError || /\bMemory\b|out of memory/i.test(String(err?.stack || err));
+      if (!isMemory) throw err;
+      if (attempt >= MEMORY_RETRY_MS.length) {
+        throw new Error('Safari non ha concesso la memoria necessaria (1 GB). Chiudi le altre schede, ' +
+          'chiudi e riapri Safari, poi riprova.');
+      }
+      logLine(`[gaemboy] allocazione memoria fallita, nuovo tentativo tra ${MEMORY_RETRY_MS[attempt]} ms`);
+      await new Promise((r) => setTimeout(r, MEMORY_RETRY_MS[attempt]));
+    }
+  }
+}
+
 self.onmessage = async ({ data }) => {
   if (data.type === 'sync') {
     syncSaves('richiesta').catch((err) => logLine(`[gaemboy] sincronizzazione fallita: ${err}`));
@@ -432,7 +456,7 @@ self.onmessage = async ({ data }) => {
   const romName = file.name.replace(/[^\w.\- ]/g, '_');
   try {
     gameKey = await fingerprint(file);
-    mod = await createGaemboy3DS({
+    mod = await createWithMemoryRetry({
       canvas: data.canvas || undefined,
       locateFile: (path, prefix) =>
         path.endsWith('.wasm') ? `${prefix}${path}?v=${ASSET_VERSION}` : `${prefix}${path}`,
@@ -483,6 +507,6 @@ self.onmessage = async ({ data }) => {
       syncSaves('periodico').catch((err) => logLine(`[gaemboy] sincronizzazione fallita: ${err}`));
     }, SYNC_MS);
   } catch (err) {
-    post('error', { message: String(err && err.stack ? err.stack : err) });
+    post('error', { message: err?.message ? `${err.name}: ${err.message}\n${err.stack || ''}`.trim() : String(err) });
   }
 };
