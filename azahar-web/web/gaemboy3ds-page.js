@@ -10,8 +10,8 @@ const OFF = {
 };
 import {
   forgetRootHandle, gamesFromFileList, loadRootHandle, metadataOf, openGame, saveRootHandle, scanDirectoryHandle,
-} from './gaemboy3ds-library.js?v=19';
-import { bindTouchControls } from './gaemboy3ds-touch.js?v=19';
+} from './gaemboy3ds-library.js?v=20';
+import { bindTouchControls } from './gaemboy3ds-touch.js?v=20';
 
 const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
@@ -254,7 +254,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=19', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=20', { type: 'module' });
   $('selection-view').hidden = $('selection-footer').hidden = true;
   $('game-view').hidden = false;
   document.body.classList.add('playing');
@@ -264,11 +264,10 @@ function boot(file) {
   canvas.focus({ preventScroll: true });
   window.scrollTo(0, 0);
   renderLibrary();
-  if (library) libStatus('Gioco avviato. Per avviarne un altro ricarica la pagina.');
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
-    $('game-status').textContent = 'Errore: apri il menu per cambiare gioco.';
+    $('game-status').textContent = 'Errore: apri il Menu per cambiare gioco.';
     resetInput();
     $('touch-controls').disabled = true;
     notice(`Il worker dell'emulatore si è interrotto: ${msg}`, 'bad');
@@ -286,7 +285,7 @@ function boot(file) {
         logTotal = data.total;
         break;
       case 'error':
-        $('game-status').textContent = 'Caricamento non riuscito: apri il menu per cambiare gioco.';
+        $('game-status').textContent = 'Caricamento non riuscito: apri il Menu per cambiare gioco.';
         notice(`Errore nel caricamento del modulo: ${data.message}`, 'bad');
         log(`[errore] ${data.message}`);
         failRequests(data.message);
@@ -439,7 +438,7 @@ function updateStats() {
   const speed = (100 * fps) / NATIVE_FPS;
   const buffered = (readI('audioWrite') - readI('audioRead')) >>> 0;
   $('s-status').textContent = STATUS[status] ?? status;
-  $('game-status').textContent = status === 2 ? `${fps.toFixed(1)} fps · ${speed.toFixed(0)}%` : STATUS[status] ?? status;
+  $('game-status').textContent = status === 2 ? '' : status === 3 ? 'Errore: apri il Menu per cambiare gioco.' : 'Caricamento…';
   $('s-renderer').textContent = ctx ? 'Software (CPU)' : 'WebGL2 (GPU)';
   $('s-status').className = status === 2 ? 'good' : status === 3 ? 'bad' : 'mid';
   $('s-load').textContent = readF('loadMs') ? `${readF('loadMs').toFixed(0)} ms` : '—';
@@ -467,7 +466,7 @@ function updateStats() {
     log(`[core] ${msg}`);
     notice(msg, status === 3 || /encrypt|fail|error|unable|not supported/i.test(msg) ? 'bad' : 'info');
   }
-  if (status === 3 && $('notice').hidden) notice('Il core non è riuscito a caricare il file (vedi log).', 'bad');
+  if (status === 3 && $('notice').hidden) notice('Il core non è riuscito a caricare il file (Menu → Avanzate).', 'bad');
   bench.frames.push({ t: elapsed, frames, fps, avgMs, audioSeconds: audio / AUDIO_HZ, status });
   if (bench.frames.length > 4000) bench.frames.splice(0, bench.frames.length - 4000);
   checkFreeze(status, frames, now);
@@ -490,7 +489,7 @@ function checkFreeze(status, frames, now) {
   if (!watchdog.reported && now - watchdog.since > 5000 && !document.hidden) {
     watchdog.reported = true;
     log(`[watchdog] nessun frame da ${((now - watchdog.since) / 1000).toFixed(1)} s (fermo a ${frames})`);
-    notice(`L'emulazione sembra bloccata (frame fermi a ${frames}). Premi "Scarica log" e inviami il file.`, 'bad');
+    notice(`L'emulazione sembra bloccata (frame fermi a ${frames}). Apri Menu → Avanzate per scaricare il log.`, 'bad');
   }
 }
 
@@ -591,11 +590,9 @@ function showLibrary(result, live) {
   if (result.truncated) text += ' Elenco limitato ai primi 2000 file.';
   if (!live) {
     text += hasDirectoryPicker
-      ? ' Premi «Riconnetti cartella» per consentire di nuovo la lettura.'
-      : ' Il browser non conserva l\'accesso alla cartella: premi «Gioca» e conferma la stessa cartella per avviare il gioco.';
+      ? ' Premi «Riconnetti cartella» per leggerla di nuovo.'
+      : ' Premi «Gioca» e conferma la stessa cartella.';
   }
-  else if (!hasDirectoryPicker) text += ' Per vedere nuovi giochi premi «Aggiorna» e riseleziona la stessa cartella.';
-  if (worker) text += ' Per avviare un altro gioco ricarica la pagina.';
   libStatus(text);
   try {
     localStorage.setItem(LIB_META_KEY, JSON.stringify(metadataOf(result)));
@@ -757,10 +754,15 @@ async function startDemo(name) {
 $('demo').onclick = () => startDemo($('demo').dataset.file);
 $('demo3d').onclick = () => startDemo($('demo3d').dataset.file);
 // Hosted builds only ship redistributable demos: hide buttons whose file is not deployed.
+function hideEmptyDemos() {
+  const picker = document.querySelector('.demo-picker');
+  if (picker && ['demo', 'demo3d'].every((id) => $(id).hidden)) picker.hidden = true;
+}
 for (const id of ['demo', 'demo3d']) {
+  const hide = () => { $(id).hidden = true; hideEmptyDemos(); };
   fetch(`./homebrew/${$(id).dataset.file}`, { method: 'HEAD' })
-    .then((r) => { if (!r.ok) $(id).hidden = true; })
-    .catch(() => { $(id).hidden = true; });
+    .then((r) => { if (!r.ok) hide(); })
+    .catch(hide);
 }
 $('pick').onclick = () => $('file').click();
 $('file').onchange = (e) => {
@@ -894,7 +896,7 @@ async function startMicrophone() {
   microphoneStream = stream;
   try {
     microphoneContext = new AudioContext({ latencyHint: 'interactive' });
-    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=19');
+    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=20');
     if (!pageActive) throw new Error('Pagina chiusa.');
     microphoneBuffer = new SharedArrayBuffer(12 + 65536 * 2);
     microphoneNode = new AudioWorkletNode(microphoneContext, 'gaemboy3ds-microphone', {
@@ -1072,6 +1074,32 @@ function releaseScreen(e) {
   screenPointer = null;
 }
 for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(type, releaseScreen);
+
+// iOS Safari: stop pinch/double-tap zoom, rubber-band scroll and long-press callouts while playing.
+const playing = () => document.body.classList.contains('playing');
+const insideMenu = (target) => target instanceof Element && !!target.closest('#game-menu');
+for (const type of ['gesturestart', 'gesturechange', 'gestureend']) {
+  document.addEventListener(type, (e) => e.preventDefault());
+}
+document.addEventListener('touchmove', (e) => {
+  if (playing() && !insideMenu(e.target)) e.preventDefault();
+}, { passive: false });
+let lastTouchEnd = 0;
+document.addEventListener('touchend', (e) => {
+  const now = Date.now();
+  if (playing() && !insideMenu(e.target) && now - lastTouchEnd < 350) e.preventDefault();
+  lastTouchEnd = now;
+}, { passive: false });
+document.addEventListener('dblclick', (e) => {
+  if (playing() && !insideMenu(e.target)) e.preventDefault();
+});
+document.addEventListener('contextmenu', (e) => {
+  if (playing() && !insideMenu(e.target)) e.preventDefault();
+});
+// iOS only lets audio start from a user gesture: resume on touch if it was suspended.
+document.addEventListener('pointerdown', () => {
+  if (audioOn && audioCtx && audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+}, { capture: true });
 
 const params = new URLSearchParams(location.search);
 if (params.has('mute')) { audioOn = false; $('audio').textContent = 'Audio: off'; }

@@ -2,97 +2,49 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>GAEMBOY 3DS LAB — Azahar in WebAssembly</title>
-<style>
-  :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
-  body { margin: 0; padding: 16px; background: #111418; color: #e8eaed; }
-  h1 { font-size: 1.15rem; margin: 0 0 4px; }
-  p.sub { margin: 0 0 12px; color: #9aa0a6; font-size: .85rem; max-width: 980px; }
-  .row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
-  #screen { background: #000; image-rendering: pixelated; width: 400px; height: 480px;
-            border-radius: 6px; touch-action: none; }
-  button, label.btn { background: #e60012; color: #fff; border: 0; border-radius: 8px; padding: 9px 16px;
-           font-size: .95rem; cursor: pointer; margin: 0 8px 8px 0; display: inline-block; }
-  button.alt { background: #2a2f36; }
-  button:disabled, label.btn.disabled { opacity: .5; cursor: default; pointer-events: none; }
-  input[type=file], [hidden] { display: none !important; }
-  table { border-collapse: collapse; font-size: .85rem; min-width: 300px; }
-  td { padding: 4px 8px; border-bottom: 1px solid #2a2f36; }
-  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
-  .good { color: #81c995; } .mid { color: #fdd663; } .bad { color: #f28b82; }
-  #notice { margin: 4px 0 10px; padding: 10px 12px; border-radius: 8px; background: #1c2128; max-width: 960px; }
-  #notice.bad { background: #3b1d1d; color: #f8c9c4; }
-  #rom-info { color: #9aa0a6; font-size: .82rem; margin-bottom: 8px; min-height: 1em; }
-  #log { margin-top: 12px; max-height: 220px; overflow: auto; background: #1c2128; padding: 8px;
-         border-radius: 8px; font: .72rem ui-monospace, monospace; white-space: pre-wrap; }
-  .keys { color: #9aa0a6; font-size: .78rem; margin-top: 8px; line-height: 1.6; max-width: 420px; }
-  kbd { background: #2a2f36; border-radius: 4px; padding: 0 4px; font-size: .75rem; }
-  footer { margin-top: 16px; color: #9aa0a6; font-size: .75rem; max-width: 960px; line-height: 1.5; }
-  footer a { color: #8ab4f8; }
-  .features { max-width: 960px; margin-top: 16px; }
-  .features details { background: #1c2128; border-radius: 8px; margin: 8px 0; padding: 10px 12px; }
-  .features summary { cursor: pointer; font-weight: 600; }
-  .features fieldset { border: 0; margin: 10px 0 0; padding: 0; }
-  .features p { color: #b6bdc5; font-size: .83rem; line-height: 1.5; }
-  .features input, .features select, .features textarea {
-    background: #111418; color: #e8eaed; border: 1px solid #59616b; border-radius: 5px;
-    padding: 7px; font: inherit; margin: 0 8px 8px 0;
-  }
-  .features textarea { display: block; width: min(100%, 440px); box-sizing: border-box; font-family: monospace; }
-  .cheat-item { border-top: 1px solid #39414b; padding-top: 8px; }
-  .cheat-item pre { white-space: pre-wrap; overflow-wrap: anywhere; }
-  #feature-status { min-height: 1.4em; }
-  #library { margin-top: 0; margin-bottom: 12px; }
-  #lib-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 280px; overflow: auto; }
-  #lib-list li { display: flex; align-items: center; gap: 10px; border-top: 1px solid #2a2f36; padding: 5px 0; }
-  #lib-list li button { margin: 0; padding: 5px 12px; font-size: .85rem; }
-  #lib-list .game { flex: 1; overflow-wrap: anywhere; font-size: .85rem; }
-  #lib-list .meta { color: #9aa0a6; font-size: .75rem; white-space: nowrap; }
-</style>
-<link rel="stylesheet" href="./gaemboy3ds-ui.css?v=19">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111418">
+<meta name="format-detection" content="telephone=no">
+<title>GAEMBOY 3DS</title>
+<link rel="stylesheet" href="./gaemboy3ds-ui.css?v=20">
 </head>
 <body>
 <main>
 <section id="selection-view" aria-labelledby="selection-title">
 <h1 id="selection-title">GAEMBOY 3DS</h1>
-<p class="sub">Scegli una ROM o una cartella per iniziare. I giochi restano sul dispositivo, senza upload.</p>
+<p class="sub">Scegli un gioco. Resta sul tuo dispositivo, nessun upload.</p>
 <div class="selection-actions">
   <button id="pick" type="button">Apri ROM…</button><input id="file" type="file">
   <button id="lib-pick" type="button" class="alt">Scegli cartella giochi…</button><input id="lib-dir" type="file" webkitdirectory multiple>
 </div>
-<details class="demo-picker">
-  <summary>Prova una demo senza ROM</summary>
-  <button id="demo" data-file="SuperHaxagon.3dsx">Demo 2D: Super Haxagon (GPL)</button>
-  <button id="demo3d" data-file="craftus_reloaded.3dsx">Demo 3D: Craftus Reloaded (MIT)</button>
-</details>
-<section class="features" id="library" aria-label="Libreria giochi" hidden>
-  <details open>
-    <summary>Libreria giochi (cartella locale)</summary>
-    <fieldset id="library-actions">
-      <button id="lib-refresh" type="button" class="alt" disabled>Aggiorna</button>
-      <button id="lib-forget" type="button" class="alt" disabled>Dimentica cartella</button>
-      <input id="lib-filter" type="search" placeholder="Cerca" aria-label="Cerca nella libreria" hidden>
-      <div id="lib-status" role="status" aria-live="polite"></div>
-      <ul id="lib-list"></ul>
-    </fieldset>
-    <p id="lib-help">I giochi restano nella cartella: il browser memorizza solo l'elenco e, al momento dell'avvio, legge il file
-      a blocchi senza copiarlo né caricarlo online. Salvataggi, stati e cheat restano invece nel browser.
-      Dopo aver aggiunto giochi alla cartella premi <b>Aggiorna</b>.
-      Su Safari e Firefox, dopo un ricaricamento, premi <b>Gioca</b> e conferma la stessa cartella: il gioco parte subito.</p>
-  </details>
+<section id="library" aria-label="Libreria giochi" hidden>
+  <h2>Libreria</h2>
+  <div id="library-actions">
+    <button id="lib-refresh" type="button" class="alt" disabled>Aggiorna</button>
+    <button id="lib-forget" type="button" class="alt" disabled>Dimentica cartella</button>
+    <input id="lib-filter" type="search" placeholder="Cerca" aria-label="Cerca nella libreria" hidden>
+    <div id="lib-status" role="status" aria-live="polite"></div>
+    <ul id="lib-list"></ul>
+  </div>
 </section>
-<p class="sub">Formati: .3ds / .cci / .cxi / .app decrittati e homebrew .3dsx / .elf.
-  Usa solo dump delle tue cartucce o homebrew. Salvataggi e stati restano nel browser.
-  Su iPhone puoi usare <b>Apri ROM</b> dall'app File; le prestazioni dipendono dal dispositivo.</p>
+<div class="demo-picker">
+  <h2>Demo</h2>
+  <button id="demo3d" type="button" class="alt" data-file="craftus_reloaded.3dsx">Craftus Reloaded (3D)</button>
+  <button id="demo" type="button" class="alt" data-file="SuperHaxagon.3dsx">Super Haxagon (2D)</button>
+</div>
 </section>
 <section id="game-view" aria-label="Gioco" hidden>
   <header class="game-header">
     <h1 id="game-title">Gioco</h1>
     <button id="open-menu" type="button" class="alt" aria-haspopup="dialog" aria-controls="game-menu">Menu</button>
   </header>
-  <p id="game-status" role="status">Caricamento…</p>
-  <canvas id="screen" width="400" height="480" tabindex="-1" aria-label="Schermo superiore e inferiore del Nintendo 3DS"></canvas>
+  <div class="stage">
+    <canvas id="screen" width="400" height="480" tabindex="-1" aria-label="Schermo superiore e inferiore del Nintendo 3DS"></canvas>
+    <p id="game-status" role="status">Caricamento…</p>
+  </div>
   <fieldset id="touch-controls" disabled aria-label="Comandi touch">
     <legend class="sr-only">Comandi touch</legend>
     <div class="shoulders">
@@ -102,9 +54,17 @@
       <button type="button" data-button="11">R</button>
     </div>
     <div class="control-deck">
-      <div class="stick-group">
-        <span>Circle Pad</span>
-        <div class="stick" data-stick="left" role="group" aria-label="Circle Pad: trascina per muoverti"><span class="stick-knob"></span></div>
+      <div class="stick" data-stick="left" role="group" aria-label="Circle Pad: trascina per muoverti"><span class="stick-knob"></span></div>
+      <div class="system-buttons">
+        <button type="button" data-button="2">Select</button>
+        <button type="button" data-button="3">Start</button>
+      </div>
+      <div class="stick cstick" data-stick="right" role="group" aria-label="C-Stick: trascina per muovere la visuale"><span class="stick-knob"></span></div>
+      <div class="button-cross dpad" role="group" aria-label="Croce direzionale">
+        <button type="button" class="north" data-button="4" aria-label="Su">↑</button>
+        <button type="button" class="west" data-button="6" aria-label="Sinistra">←</button>
+        <button type="button" class="east" data-button="7" aria-label="Destra">→</button>
+        <button type="button" class="south" data-button="5" aria-label="Giù">↓</button>
       </div>
       <div class="button-cross face-buttons" role="group" aria-label="Pulsanti azione">
         <button type="button" class="north" data-button="9">X</button>
@@ -112,20 +72,6 @@
         <button type="button" class="east" data-button="8">A</button>
         <button type="button" class="south" data-button="0">B</button>
       </div>
-      <div class="button-cross dpad" role="group" aria-label="Croce direzionale">
-        <button type="button" class="north" data-button="4" aria-label="Su">↑</button>
-        <button type="button" class="west" data-button="6" aria-label="Sinistra">←</button>
-        <button type="button" class="east" data-button="7" aria-label="Destra">→</button>
-        <button type="button" class="south" data-button="5" aria-label="Giù">↓</button>
-      </div>
-      <div class="stick-group">
-        <span>C-Stick</span>
-        <div class="stick cstick" data-stick="right" role="group" aria-label="C-Stick: trascina per muovere la visuale"><span class="stick-knob"></span></div>
-      </div>
-    </div>
-    <div class="system-buttons">
-      <button type="button" data-button="2">Select</button>
-      <button type="button" data-button="3">Start</button>
     </div>
   </fieldset>
 </section>
@@ -133,22 +79,21 @@
 </main>
 <dialog id="game-menu" aria-labelledby="menu-title">
   <header class="game-header">
-    <h2 id="menu-title">Menu di gioco</h2>
+    <h2 id="menu-title">Menu</h2>
     <button id="close-menu" type="button" class="alt" autofocus>Chiudi</button>
   </header>
-  <p class="sub">Il gioco continua mentre il menu è aperto; i comandi sono disattivati.</p>
   <div id="rom-info"></div>
   <div class="menu-actions">
     <button id="audio" type="button" class="alt">Audio: on</button>
     <button id="throttle" type="button" class="alt" disabled>Velocità: 60 fps</button>
     <button id="save" type="button" class="alt" disabled>Salva ora</button>
-    <button id="back-library" type="button" class="alt">Cambia gioco</button>
+    <button id="back-library" type="button">Cambia gioco</button>
   </div>
   <div id="menu-status" role="status"></div>
-<section class="features" aria-label="Funzioni emulatore">
+  <section class="features" aria-label="Funzioni emulatore">
   <div id="feature-status" role="status" aria-live="polite"></div>
   <details>
-    <summary>Save state e backup</summary>
+    <summary>Stati e backup</summary>
     <fieldset id="storage-actions" disabled>
       <label for="state-slot">Slot</label>
       <select id="state-slot">
@@ -156,17 +101,16 @@
         <option value="2">Slot 2 — vuoto</option>
         <option value="3">Slot 3 — vuoto</option>
       </select>
-      <button id="state-save" type="button">Salva stato</button>
-      <button id="state-load" type="button" class="alt" disabled>Carica stato</button>
-      <button id="state-delete" type="button" class="alt" disabled>Elimina stato</button>
-      <button id="export-saves" type="button" class="alt">Esporta backup ZIP</button>
+      <div class="menu-actions">
+        <button id="state-save" type="button">Salva stato</button>
+        <button id="state-load" type="button" class="alt" disabled>Carica stato</button>
+        <button id="state-delete" type="button" class="alt" disabled>Elimina stato</button>
+        <button id="export-saves" type="button" class="alt">Esporta backup ZIP</button>
+      </div>
     </fieldset>
-    <p>Tre slot per file di gioco, conservati nel browser. Uno stato può non essere compatibile con versioni diverse del core o del gioco.
-      Il backup locale contiene salvataggi, stati, cheat e dati di sistema, ma non la cache shader; il limite è 512 MB.
-      L'importazione del backup non è ancora disponibile. Il browser può cancellare i dati: conserva il backup e usa anche i normali salvataggi nel gioco.</p>
   </details>
   <details>
-    <summary>Cheat Gateway</summary>
+    <summary>Cheat</summary>
     <fieldset id="cheat-actions" disabled>
       <label for="cheat-name">Nome</label>
       <input id="cheat-name" maxlength="128" placeholder="Nome del cheat">
@@ -176,7 +120,6 @@
       <button id="cheat-add" type="button">Aggiungi cheat</button>
       <div id="cheat-list"></div>
     </fieldset>
-    <p>Usa codici Gateway per la versione esatta del gioco. Possono causare crash o corrompere i salvataggi: crea prima un backup.</p>
   </details>
   <details>
     <summary>Microfono e fotocamera</summary>
@@ -191,11 +134,9 @@
       <button id="camera-toggle" type="button" class="alt">Attiva fotocamera</button>
       <span id="camera-status">Disattivata</span>
     </fieldset>
-    <p>Il browser chiede il permesso solo quando attivi un dispositivo. Audio e immagini restano locali.
-      Una sola fotocamera alimenta tutte quelle virtuali; la stereoscopia reale e gli effetti non sono supportati.</p>
   </details>
   <details>
-    <summary>Diagnostica e comandi</summary>
+    <summary>Avanzate</summary>
     <button id="dl-log" type="button" class="alt">Scarica log</button>
     <table>
       <tr><td>Stato</td><td id="s-status">—</td></tr>
@@ -215,22 +156,17 @@
     <div class="keys">
       <b>Tastiera</b>: <kbd>←↑→↓</kbd> D-pad · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>S</kbd> X · <kbd>A</kbd> Y ·
       <kbd>Q</kbd>/<kbd>W</kbd> L/R · <kbd>E</kbd>/<kbd>R</kbd> ZL/ZR · <kbd>Invio</kbd> Start · <kbd>⌫</kbd> Select ·
-      <kbd>I J K L</kbd> Circle Pad · <kbd>T F G H</kbd> C-Stick<br>
-      <b>Gamepad</b>: tasti per posizione come sul 3DS (destra = A, basso = B), stick sinistro = Circle Pad, destro = C-Stick, grilletti = ZL/ZR.<br>
-      <b>Touch</b>: mouse o dito sullo schermo inferiore; comandi sotto gli schermi, anche con più dita.
-      Per cambiare gioco usa <b>Menu → Cambia gioco</b>.
+      <kbd>I J K L</kbd> Circle Pad · <kbd>T F G H</kbd> C-Stick
     </div>
     <div id="log"></div>
   </details>
-</section>
-<p class="sub">Azahar in WebAssembly · <a href="https://github.com/DomenicoGonnelli/gaemboy-3ds-web">Codice sorgente, GPL v3+</a></p>
+  </section>
+  <p class="sub"><a href="https://github.com/DomenicoGonnelli/gaemboy-3ds-web">Codice sorgente, GPL v3+</a></p>
 </dialog>
 <footer id="selection-footer">
   Software libero sotto <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3 o successiva</a> ·
   <a id="source-link" href="https://github.com/DomenicoGonnelli/gaemboy-3ds-web">Codice sorgente</a> ·
-  basato su <a href="https://github.com/azahar-emu/azahar">Azahar</a> (Citra Emulator Project / Azahar Emulator Project).<br>
-  Progetto non affiliato a né approvato da Nintendo. Nessun gioco, BIOS o chiave è incluso: usa solo dump delle tue cartucce
-  o software homebrew. Nintendo 3DS è un marchio di Nintendo.
+  basato su <a href="https://github.com/azahar-emu/azahar">Azahar</a>. Non affiliato a Nintendo; nessun gioco, BIOS o chiave incluso.
 </footer>
 <script>
   // Static hosts without COOP/COEP headers: let coi-sw.js add them, then reload once under its control.
@@ -245,6 +181,6 @@
     sessionStorage.removeItem('coi-reload');
   }
 </script>
-<script type="module" src="./gaemboy3ds-page.js?v=19"></script>
+<script type="module" src="./gaemboy3ds-page.js?v=20"></script>
 </body>
 </html>
