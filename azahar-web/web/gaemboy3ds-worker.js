@@ -1,9 +1,9 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=25';
-import { createSaveArchive } from './gaemboy3ds-archive.js?v=25';
-const ASSET_VERSION = '25';
+import createGaemboy3DS from './gaemboy3ds.js?v=26';
+import { createSaveArchive } from './gaemboy3ds-archive.js?v=26';
+const ASSET_VERSION = '26';
 
 const SAVES = '/gaemboy/3ds/saves';
 // libctru homebrew only start NDSP if sdmc:/3ds/dspfirm.cdc exists; Azahar's HLE DSP ignores
@@ -59,10 +59,10 @@ const GL_CATEGORY = {
   fbo: ['blitFramebuffer', 'framebufferTexture2D', 'framebufferRenderbuffer', 'bindFramebuffer',
     'invalidateFramebuffer', 'createFramebuffer', 'createTexture', 'deleteTexture', 'renderbufferStorage'],
 };
-const perf = { gl: {}, glCount: {}, file: 0, fileBytes: 0, fileCalls: 0, fileHits: 0, ticks: 0, tickMs: 0, tickMax: 0, long: [] };
+const perf = { gl: {}, glCount: {}, file: 0, fileBytes: 0, fileCalls: 0, fileHits: 0, mirrorHits: 0, ticks: 0, tickMs: 0, tickMax: 0, long: [] };
 const resetPerf = () => {
   perf.gl = {}; perf.glCount = {};
-  perf.file = perf.fileBytes = perf.fileCalls = perf.fileHits = perf.ticks = perf.tickMs = perf.tickMax = 0;
+  perf.file = perf.fileBytes = perf.fileCalls = perf.fileHits = perf.mirrorHits = perf.ticks = perf.tickMs = perf.tickMax = 0;
   perf.long = [];
 };
 const noteLong = (name, dt) => { if (perf.long.length < 20) perf.long.push(`${name} ${dt.toFixed(0)}ms`); };
@@ -136,6 +136,81 @@ function instrumentFileReads() {
 // and keep the most recent ones (LRU) so nearby reads are served from memory.
 const ROM_BLOCK = 1 << 20;
 const ROM_CACHE_BLOCKS = 64;
+// Large ROMs are also mirrored into the origin private file system (OPFS), whose synchronous
+// reads take ~1 ms: a helper worker copies the picked file in the background and the copy is kept
+// for the next sessions. Needs concurrent sync handles (Chrome 121+); elsewhere a mirror is only
+// used once it is complete, otherwise reads keep going to the picked file.
+const MIRROR_DIR = 'gaemboy-rom-mirror';
+const MIRROR_MIN_SIZE = 32 << 20;
+let romMirror = null;
+async function openRomMirror(file, key) {
+  if (file.size < MIRROR_MIN_SIZE || !navigator.storage?.getDirectory || !self.FileSystemSyncAccessHandle) return null;
+  const concurrent = 'mode' in FileSystemSyncAccessHandle.prototype;
+  const total = Math.ceil(file.size / ROM_BLOCK);
+  const control = new SharedArrayBuffer(16 + 4 * Math.ceil(total / 32));
+  const ctl = new Int32Array(control);
+  const bits = ctl.subarray(4);
+  ctl[3] = total;
+  const dir = await (await navigator.storage.getDirectory()).getDirectoryHandle(MIRROR_DIR, { create: true });
+  try {
+    const saved = await (await (await dir.getFileHandle(`${key}.map`)).getFile()).arrayBuffer();
+    if (saved.byteLength === 8 + bits.byteLength && new Float64Array(saved, 0, 1)[0] === file.size) {
+      bits.set(new Int32Array(saved, 8));
+    }
+  } catch { /* no saved progress */ }
+  for (let i = 0; i < total; i++) if ((bits[i >> 5] >>> (i & 31)) & 1) ctl[1]++;
+  const complete = ctl[1] === total;
+  if (!complete && !concurrent) return null;
+  if (!complete && !(await makeRoomForMirror(dir, key, file.size))) {
+    logLine('[gaemboy] spazio insufficiente per la copia locale della ROM');
+    return null;
+  }
+  const handle = await (await dir.getFileHandle(`${key}.bin`, { create: true }))
+    .createSyncAccessHandle(concurrent ? { mode: 'readwrite-unsafe' } : undefined);
+  if (handle.getSize() !== file.size) handle.truncate(file.size);
+  const mirror = {
+    file, handle, ctl, bits, total, writable: concurrent,
+    has: (i) => (Atomics.load(bits, i >> 5) >>> (i & 31)) & 1,
+    mark(i) {
+      if (!(Atomics.or(bits, i >> 5, 1 << (i & 31)) & (1 << (i & 31)))) Atomics.add(ctl, 1, 1);
+    },
+  };
+  if (complete) {
+    ctl[2] = 1;
+    logLine('[gaemboy] ROM letta dalla copia locale (nessuna lettura lenta dal file)');
+  } else {
+    logLine(`[gaemboy] avvio copia locale della ROM (${ctl[1]}/${total} MB già copiati)`);
+    const copier = new Worker(new URL(`gaemboy3ds-rommirror.js?v=${ASSET_VERSION}`, self.location));
+    copier.onmessage = ({ data }) => { logLine(data.line); copier.terminate(); };
+    copier.onerror = (e) => { logLine(`[gaemboy] copia locale della ROM fallita: ${e.message}`); Atomics.store(ctl, 2, 2); };
+    copier.postMessage({ file, dir: MIRROR_DIR, key, control, block: ROM_BLOCK });
+  }
+  return mirror;
+}
+// Keeps the mirror directory within quota by deleting the least recently used other mirrors.
+async function makeRoomForMirror(dir, key, size) {
+  const others = [];
+  for await (const [name, entry] of dir.entries()) {
+    const k = name.replace(/\.(bin|map)$/, '');
+    if (k === key || entry.kind !== 'file') continue;
+    const f = await entry.getFile();
+    let o = others.find((x) => x.key === k);
+    if (!o) others.push((o = { key: k, bytes: 0, used: 0 }));
+    o.bytes += f.size;
+    o.used = Math.max(o.used, f.lastModified);
+  }
+  others.sort((a, b) => a.used - b.used);
+  const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+  let free = quota - usage;
+  const need = size + (64 << 20);
+  while (free < need && others.length) {
+    const o = others.shift();
+    for (const ext of ['bin', 'map']) await dir.removeEntry(`${o.key}.${ext}`).catch(() => {});
+    free += o.bytes;
+    logLine(`[gaemboy] rimossa una vecchia copia locale (${(o.bytes / 1048576).toFixed(0)} MB)`);
+  }
+  return free >= need;
+}
 function cacheWorkerfsReads(WORKERFS) {
   const ops = WORKERFS.stream_ops;
   if (ops.__gbCached) return;
@@ -150,7 +225,22 @@ function cacheWorkerfsReads(WORKERFS) {
       perf.fileHits++;
     } else {
       const start = index * ROM_BLOCK;
-      data = new Uint8Array(WORKERFS.reader.readAsArrayBuffer(blob.slice(start, Math.min(blob.size, start + ROM_BLOCK))));
+      const end = Math.min(blob.size, start + ROM_BLOCK);
+      const mirror = romMirror?.file === blob ? romMirror : null;
+      if (mirror?.has(index)) {
+        data = new Uint8Array(end - start);
+        mirror.handle.read(data, { at: start });
+        perf.mirrorHits++;
+      } else {
+        if (mirror) Atomics.store(mirror.ctl, 0, index + 1);
+        data = new Uint8Array(WORKERFS.reader.readAsArrayBuffer(blob.slice(start, end)));
+        if (mirror?.writable) {
+          try {
+            mirror.handle.write(data, { at: start });
+            mirror.mark(index);
+          } catch { /* the background copy will fill it */ }
+        }
+      }
       if (cache.size >= ROM_CACHE_BLOCKS) cache.delete(cache.keys().next().value);
     }
     cache.set(index, data);
@@ -207,6 +297,8 @@ function flushPerf() {
     fileKB: Math.round(perf.fileBytes / 1024),
     fileCalls: perf.fileCalls,
     fileHits: perf.fileHits,
+    mirrorHits: perf.mirrorHits,
+    romCopy: romMirror ? Math.floor((100 * Atomics.load(romMirror.ctl, 1)) / romMirror.total) : null,
     long: perf.long,
   });
   resetPerf();
@@ -498,6 +590,11 @@ self.onmessage = async ({ data }) => {
   const romName = file.name.replace(/[^\w.\- ]/g, '_');
   try {
     gameKey = await fingerprint(file);
+    try {
+      romMirror = await openRomMirror(file, gameKey);
+    } catch (err) {
+      logLine(`[gaemboy] copia locale della ROM non disponibile: ${err?.name || ''} ${err?.message || err}`);
+    }
     mod = await createWithMemoryRetry({
       canvas: data.canvas || undefined,
       locateFile: (path, prefix) =>

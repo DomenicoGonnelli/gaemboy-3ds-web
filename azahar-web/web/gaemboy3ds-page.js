@@ -10,8 +10,8 @@ const OFF = {
 };
 import {
   forgetRootHandle, gamesFromFileList, loadRootHandle, metadataOf, openGame, saveRootHandle, scanDirectoryHandle,
-} from './gaemboy3ds-library.js?v=25';
-import { bindTouchControls } from './gaemboy3ds-touch.js?v=25';
+} from './gaemboy3ds-library.js?v=26';
+import { bindTouchControls } from './gaemboy3ds-touch.js?v=26';
 
 const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
@@ -254,7 +254,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=25', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=26', { type: 'module' });
   $('selection-view').hidden = $('selection-footer').hidden = true;
   $('game-view').hidden = false;
   document.body.classList.add('playing');
@@ -353,6 +353,8 @@ function boot(file) {
       log(`[video] OffscreenCanvas non disponibile, uso software: ${err.message}`);
     }
   }
+  // Ask to keep site storage (saves and the local ROM copy) from being evicted under pressure.
+  navigator.storage?.persist?.().catch(() => {});
   if (offscreen) {
     worker.postMessage({ type: 'boot', file, extraArgs, canvas: offscreen }, [offscreen]);
   } else {
@@ -439,7 +441,7 @@ function updateStats() {
   const speed = (100 * fps) / NATIVE_FPS;
   const buffered = (readI('audioWrite') - readI('audioRead')) >>> 0;
   $('s-status').textContent = STATUS[status] ?? status;
-  $('game-status').textContent = status === 2 ? '' : status === 3 ? 'Errore: apri il Menu per cambiare gioco.' : 'Caricamento…';
+  $('game-status').textContent = status === 2 ? (romCopyPct != null && romCopyPct < 100 ? `Prima partita: copia locale del gioco ${romCopyPct}%` : '') : status === 3 ? 'Errore: apri il Menu per cambiare gioco.' : 'Caricamento…';
   $('s-renderer').textContent = ctx ? 'Software (CPU)' : 'WebGL2 (GPU)';
   $('s-status').className = status === 2 ? 'good' : status === 3 ? 'bad' : 'mid';
   $('s-load').textContent = readF('loadMs') ? `${readF('loadMs').toFixed(0)} ms` : '—';
@@ -496,15 +498,18 @@ function checkFreeze(status, frames, now) {
 
 // Per-second breakdown sent by the worker (see gaemboy3ds-worker.js): kept for the log export.
 const perfHistory = [];
+let romCopyPct = null;
 function onPerf(p) {
   const t = bench.startedAt ? (performance.now() - bench.startedAt) / 1000 : 0;
   perfHistory.push({ t: Math.round(t * 10) / 10, ...p });
+  romCopyPct = p.romCopy;
   if (perfHistory.length > 900) perfHistory.splice(0, perfHistory.length - 900);
   const glTotal = Object.values(p.gl).reduce((a, b) => a + b, 0);
   const links = p.compiles.linkProgram || 0;
   const el = $('s-perf');
   el.textContent = `GL ${glTotal.toFixed(0)} ms/s · shader ${(p.gl.shader || 0).toFixed(0)} ms` +
-    `${links ? ` (${links} link)` : ''} · file ${p.fileMs} ms · frame max ${p.tickMax} ms`;
+    `${links ? ` (${links} link)` : ''} · file ${p.fileMs} ms` +
+    `${p.romCopy != null && p.romCopy < 100 ? ` · copia ROM ${p.romCopy}%` : ''} · frame max ${p.tickMax} ms`;
   el.className = p.tickMax > 100 ? 'bad' : p.tickMax > 34 ? 'mid' : '';
   for (const l of p.long) log(`[perf] chiamata lenta: ${l}`);
 }
@@ -897,7 +902,7 @@ async function startMicrophone() {
   microphoneStream = stream;
   try {
     microphoneContext = new AudioContext({ latencyHint: 'interactive' });
-    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=25');
+    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=26');
     if (!pageActive) throw new Error('Pagina chiusa.');
     microphoneBuffer = new SharedArrayBuffer(12 + 65536 * 2);
     microphoneNode = new AudioWorkletNode(microphoneContext, 'gaemboy3ds-microphone', {
