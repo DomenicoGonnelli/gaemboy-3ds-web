@@ -1,9 +1,9 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=21';
-import { createSaveArchive } from './gaemboy3ds-archive.js?v=21';
-const ASSET_VERSION = '21';
+import createGaemboy3DS from './gaemboy3ds.js?v=22';
+import { createSaveArchive } from './gaemboy3ds-archive.js?v=22';
+const ASSET_VERSION = '22';
 
 const SAVES = '/gaemboy/3ds/saves';
 // libctru homebrew only start NDSP if sdmc:/3ds/dspfirm.cdc exists; Azahar's HLE DSP ignores
@@ -43,6 +43,8 @@ setInterval(() => {
 // program), lazy reads of the game file and the duration of each frame tick. Single calls over
 // LONG_CALL_MS are reported by name so freezes can be attributed.
 const LONG_CALL_MS = 25;
+const PNAME = { 0x91B1: 'COMPLETION_STATUS', 0x8B82: 'LINK_STATUS', 0x8B81: 'COMPILE_STATUS', 0x8B84: 'INFO_LOG_LENGTH',
+  0x8B86: 'ACTIVE_UNIFORMS', 0x8B89: 'ACTIVE_ATTRIBUTES', 0x8A36: 'ACTIVE_UNIFORM_BLOCKS' };
 const GL_CATEGORY = {
   shader: ['createShader', 'shaderSource', 'compileShader', 'attachShader', 'createProgram', 'linkProgram',
     'getProgramParameter', 'getShaderParameter', 'getProgramInfoLog', 'getShaderInfoLog', 'deleteShader',
@@ -82,7 +84,13 @@ function instrumentGL() {
       if (c === 'shader' && (name === 'linkProgram' || name === 'compileShader')) {
         perf.glCount[name] = (perf.glCount[name] || 0) + 1;
       }
-      if (dt > LONG_CALL_MS) noteLong(name, dt);
+      const pname = (name === 'getProgramParameter' || name === 'getShaderParameter') ? args[1] : 0;
+      if (pname === 0x91B1) {
+        // COMPLETION_STATUS_KHR: shows whether the browser really links in the background.
+        const k = r ? 'completionDone' : 'completionPending';
+        perf.glCount[k] = (perf.glCount[k] || 0) + 1;
+      }
+      if (dt > LONG_CALL_MS) noteLong(pname ? `${name}(${PNAME[pname] || '0x' + pname.toString(16)})` : name, dt);
       return r;
     };
   }
@@ -117,12 +125,14 @@ function instrumentTicks() {
     perf.ticks++;
     perf.tickMs += dt;
     if (dt > perf.tickMax) perf.tickMax = dt;
+    if (performance.now() - lastPerfFlush >= 1000) flushPerf();
   };
 }
 instrumentGL();
 instrumentFileReads();
-setInterval(() => {
-  instrumentTicks();
+let lastPerfFlush = performance.now();
+function flushPerf() {
+  lastPerfFlush = performance.now();
   const gl = {};
   for (const [k, v] of Object.entries(perf.gl)) gl[k] = Math.round(v * 10) / 10;
   post('perf', {
@@ -137,6 +147,12 @@ setInterval(() => {
     long: perf.long,
   });
   resetPerf();
+}
+// Safari can starve worker timers while the frame loop saturates the MessageChannel, so the
+// tick wrapper also flushes; the interval covers idle periods and installs the tick wrapper.
+setInterval(() => {
+  instrumentTicks();
+  if (performance.now() - lastPerfFlush >= 1000) flushPerf();
 }, 1000);
 
 function syncSaves(reason) {
