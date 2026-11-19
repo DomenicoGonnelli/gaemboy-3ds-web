@@ -10,7 +10,8 @@ const OFF = {
 };
 import {
   forgetRootHandle, gamesFromFileList, loadRootHandle, metadataOf, openGame, saveRootHandle, scanDirectoryHandle,
-} from './gaemboy3ds-library.js?v=18';
+} from './gaemboy3ds-library.js?v=19';
+import { bindTouchControls } from './gaemboy3ds-touch.js?v=19';
 
 const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
@@ -32,6 +33,8 @@ const PAD_DEADZONE = 0.15;
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
+const gameMenu = $('game-menu');
+const touchControls = bindTouchControls($('touch-controls'));
 const urlParams = new URLSearchParams(location.search);
 // WebGL2 (GPU) everywhere, Safari included; ?sw forces the much slower software renderer.
 const useSw = urlParams.has('sw');
@@ -76,6 +79,7 @@ function notice(text, kind = 'info') {
   $('notice').hidden = false;
   $('notice').className = kind;
   $('notice').textContent = text;
+  if (gameMenu.open && kind === 'bad') $('menu-status').textContent = text;
 }
 
 if (useSw) {
@@ -110,6 +114,8 @@ function featureMessage(message, error = false) {
 
 function refreshFeatureControls() {
   const running = !!memory && readI('status') === 2;
+  $('touch-controls').disabled = !running || gameMenu.open;
+  $('back-library').disabled = featureBusy || mediaBusy;
   $('storage-actions').disabled = $('cheat-actions').disabled = !running || !storageAvailable || featureBusy;
   $('media-actions').disabled = !running || mediaBusy;
   const selected = slots.find((slot) => slot.slot === Number($('state-slot').value));
@@ -248,12 +254,23 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=18', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=19', { type: 'module' });
+  $('selection-view').hidden = $('selection-footer').hidden = true;
+  $('game-view').hidden = false;
+  document.body.classList.add('playing');
+  $('game-title').textContent = file.name;
+  $('notice').hidden = true;
+  $('game-status').textContent = 'Caricamento…';
+  canvas.focus({ preventScroll: true });
+  window.scrollTo(0, 0);
   renderLibrary();
   if (library) libStatus('Gioco avviato. Per avviarne un altro ricarica la pagina.');
   worker.onerror = (e) => {
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
+    $('game-status').textContent = 'Errore: apri il menu per cambiare gioco.';
+    resetInput();
+    $('touch-controls').disabled = true;
     notice(`Il worker dell'emulatore si è interrotto: ${msg}`, 'bad');
     failRequests(`Worker interrotto: ${msg}`);
   };
@@ -269,6 +286,7 @@ function boot(file) {
         logTotal = data.total;
         break;
       case 'error':
+        $('game-status').textContent = 'Caricamento non riuscito: apri il menu per cambiare gioco.';
         notice(`Errore nel caricamento del modulo: ${data.message}`, 'bad');
         log(`[errore] ${data.message}`);
         failRequests(data.message);
@@ -289,6 +307,7 @@ function boot(file) {
         break;
       case 'saved':
         $('s-saves').textContent = data.ok ? `ok ${new Date().toLocaleTimeString()}` : `errore: ${data.error}`;
+        if (!data.ok) notice(`Impossibile conservare i salvataggi nel browser: ${data.error}`, 'bad');
         break;
       case 'ready':
         memory = data.memory;
@@ -371,19 +390,21 @@ function readGamepad() {
 }
 
 function frame() {
-  // input: keyboard | gamepad
-  const pad = readGamepad();
-  writeI('buttons', keyButtons | pad.buttons);
+  const acceptingInput = !gameMenu.open && !document.hidden && readI('status') === 2;
+  const pad = acceptingInput ? readGamepad() : { buttons: 0, axes: [0, 0, 0, 0] };
+  const touch = touchControls.read();
+  writeI('buttons', acceptingInput ? keyButtons | pad.buttons | touch.buttons : 0);
   const key = { analogLX: 0, analogLY: 0, analogRX: 0, analogRY: 0 };
   for (const code of keySticks) {
     const [axis, dir] = STICK_KEYS[code];
     key[axis] += dir;
   }
-  const axis = (k, v) => writeI(k, Math.round(Math.max(-1, Math.min(1, key[k] || v)) * 0x7fff));
-  axis('analogLX', pad.axes[0]);
-  axis('analogLY', pad.axes[1]);
-  axis('analogRX', pad.axes[2]);
-  axis('analogRY', pad.axes[3]);
+  const axis = (k, index) => writeI(k, acceptingInput
+    ? Math.round(Math.max(-1, Math.min(1, key[k] || touch.axes[index] || pad.axes[index])) * 0x7fff) : 0);
+  axis('analogLX', 0);
+  axis('analogLY', 1);
+  axis('analogRX', 2);
+  axis('analogRY', 3);
 
   // video (in WebGL2 mode the worker draws directly onto the OffscreenCanvas)
   if (ctx) {
@@ -418,6 +439,7 @@ function updateStats() {
   const speed = (100 * fps) / NATIVE_FPS;
   const buffered = (readI('audioWrite') - readI('audioRead')) >>> 0;
   $('s-status').textContent = STATUS[status] ?? status;
+  $('game-status').textContent = status === 2 ? `${fps.toFixed(1)} fps · ${speed.toFixed(0)}%` : STATUS[status] ?? status;
   $('s-renderer').textContent = ctx ? 'Software (CPU)' : 'WebGL2 (GPU)';
   $('s-status').className = status === 2 ? 'good' : status === 3 ? 'bad' : 'mid';
   $('s-load').textContent = readF('loadMs') ? `${readF('loadMs').toFixed(0)} ms` : '—';
@@ -532,6 +554,7 @@ function formatSize(bytes) {
 function renderLibrary() {
   const list = $('lib-list');
   list.replaceChildren();
+  $('library').hidden = !library && !rootHandle;
   $('lib-forget').disabled = !library && !rootHandle;
   $('lib-refresh').disabled = !library && !rootHandle;
   if (!library) return;
@@ -723,12 +746,13 @@ $('lib-filter').oninput = renderLibrary;
 // ---------------------------------------------------------------- UI
 async function startDemo(name) {
   ensureAudio();
-  const res = await fetch(`./homebrew/${name}`);
-  if (!res.ok) {
-    notice(`Demo ${name} non trovata (${res.status}): usa "Carica gioco…".`, 'bad');
-    return;
+  try {
+    const res = await fetch(`./homebrew/${name}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    boot(new File([await res.blob()], name));
+  } catch (err) {
+    notice(`Impossibile aprire la demo ${name}: ${err.message}. Usa «Apri ROM».`, 'bad');
   }
-  boot(new File([await res.blob()], name));
 }
 $('demo').onclick = () => startDemo($('demo').dataset.file);
 $('demo3d').onclick = () => startDemo($('demo3d').dataset.file);
@@ -766,6 +790,29 @@ $('audio').onclick = async () => {
   $('audio').textContent = audioOn ? 'Audio: on' : 'Audio: off';
 };
 $('save').onclick = () => worker && worker.postMessage({ type: 'sync' });
+$('open-menu').onclick = () => {
+  resetInput();
+  gameMenu.showModal();
+  refreshFeatureControls();
+};
+$('close-menu').onclick = () => gameMenu.close();
+gameMenu.addEventListener('close', () => {
+  resetInput();
+  refreshFeatureControls();
+  canvas.focus({ preventScroll: true });
+});
+$('back-library').onclick = async () => {
+  if (!confirm('Tornare alla selezione giochi? I progressi non salvati nel gioco o in uno stato andranno persi.')) return;
+  resetInput();
+  if (storageAvailable) {
+    const result = await performFeature('sync-saves');
+    if (!result) return;
+  }
+  // A fresh document is required to recreate the worker and its transferred canvas.
+  const url = new URL(location.href);
+  url.searchParams.delete('demo');
+  location.replace(url.href);
+};
 
 $('state-slot').onchange = refreshFeatureControls;
 $('state-save').onclick = () => {
@@ -847,7 +894,7 @@ async function startMicrophone() {
   microphoneStream = stream;
   try {
     microphoneContext = new AudioContext({ latencyHint: 'interactive' });
-    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=18');
+    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=19');
     if (!pageActive) throw new Error('Pagina chiusa.');
     microphoneBuffer = new SharedArrayBuffer(12 + 65536 * 2);
     microphoneNode = new AudioWorkletNode(microphoneContext, 'gaemboy3ds-microphone', {
@@ -967,6 +1014,7 @@ async function toggleMedia(kind) {
 $('mic-toggle').onclick = () => toggleMedia('microfono');
 $('camera-toggle').onclick = () => toggleMedia('fotocamera');
 addEventListener('pagehide', () => {
+  resetInput();
   pageActive = false;
   stopMicrophone();
   stopCamera();
@@ -976,7 +1024,7 @@ addEventListener('pagehide', () => {
 const isControl = (target) => target instanceof Element &&
   !!target.closest('input, textarea, select, button, summary, a, [contenteditable="true"]');
 addEventListener('keydown', (e) => {
-  if (!memory || isControl(e.target)) return;
+  if (!memory || gameMenu.open || readI('status') !== 2 || isControl(e.target)) return;
   if (e.code in KEYMAP) { keyButtons |= 1 << KEYMAP[e.code]; e.preventDefault(); }
   if (e.code in STICK_KEYS) { keySticks.add(e.code); e.preventDefault(); }
 });
@@ -984,21 +1032,46 @@ addEventListener('keyup', (e) => {
   if (e.code in KEYMAP) { keyButtons &= ~(1 << KEYMAP[e.code]); if (!isControl(e.target)) e.preventDefault(); }
   if (e.code in STICK_KEYS) { keySticks.delete(e.code); if (!isControl(e.target)) e.preventDefault(); }
 });
-addEventListener('blur', () => { keyButtons = 0; keySticks.clear(); });
+let screenPointer = null;
+function resetInput() {
+  keyButtons = 0;
+  keySticks.clear();
+  touchControls.reset();
+  screenPointer = null;
+  if (memory) {
+    for (const key of ['buttons', 'analogLX', 'analogLY', 'analogRX', 'analogRY', 'pointerDown']) writeI(key, 0);
+  }
+}
+addEventListener('blur', resetInput);
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) resetInput();
+});
 
 // libretro pointer space is [-0x7fff, 0x7fff] over the whole output frame; the core maps it onto
 // the bottom screen when it falls inside its rectangle. Works for mouse, pen and touch.
 function pointer(e, down) {
-  if (!memory) return;
+  if (!memory || gameMenu.open || readI('status') !== 2) return;
   const r = canvas.getBoundingClientRect();
-  writeI('pointerX', Math.round((((e.clientX - r.left) / r.width) * 2 - 1) * 0x7fff));
-  writeI('pointerY', Math.round((((e.clientY - r.top) / r.height) * 2 - 1) * 0x7fff));
+  const coordinate = (position, start, size) =>
+    Math.round(Math.max(-1, Math.min(1, ((position - start) / size) * 2 - 1)) * 0x7fff);
+  writeI('pointerX', coordinate(e.clientX, r.left, r.width));
+  writeI('pointerY', coordinate(e.clientY, r.top, r.height));
   if (down !== undefined) writeI('pointerDown', down ? 1 : 0);
 }
-canvas.addEventListener('pointerdown', (e) => { canvas.setPointerCapture(e.pointerId); pointer(e, true); });
-canvas.addEventListener('pointermove', (e) => pointer(e));
-canvas.addEventListener('pointerup', (e) => pointer(e, false));
-canvas.addEventListener('pointercancel', (e) => pointer(e, false));
+canvas.addEventListener('pointerdown', (e) => {
+  if (screenPointer !== null || !memory || gameMenu.open || readI('status') !== 2) return;
+  e.preventDefault();
+  screenPointer = e.pointerId;
+  canvas.setPointerCapture(e.pointerId);
+  pointer(e, true);
+});
+canvas.addEventListener('pointermove', (e) => { if (screenPointer === e.pointerId) pointer(e); });
+function releaseScreen(e) {
+  if (screenPointer !== e.pointerId) return;
+  if (memory) writeI('pointerDown', 0);
+  screenPointer = null;
+}
+for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) canvas.addEventListener(type, releaseScreen);
 
 const params = new URLSearchParams(location.search);
 if (params.has('mute')) { audioOn = false; $('audio').textContent = 'Audio: off'; }

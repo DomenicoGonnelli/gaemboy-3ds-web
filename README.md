@@ -19,7 +19,7 @@ Proof of concept that works on desktop browsers.
 |---|---|
 | Browsers | Chrome / Edge / Safari (WebGL2 renderer by default; `?sw` forces the slower software renderer). |
 | Performance | On an Apple M2 Pro, homebrew and heavy commercial titles run at or near full speed in Chrome. |
-| Mobile | Phone browsers are too slow, because WebAssembly has no ARM JIT. Use a native Android build of Azahar instead. |
+| Mobile | Experimental touch UI for testing on phones, including iPhone. Performance and memory limits depend on the device and game; full-speed mobile play is not guaranteed. |
 | Formats | Decrypted `.3ds` / `.cci` / `.cxi` / `.app`, homebrew `.3dsx` / `.elf`. The file is read locally in chunks and never uploaded. |
 | Saves | Game saves, save states, cheats and a bounded shader warm-up cache are persisted in the browser (IndexedDB). |
 
@@ -28,6 +28,17 @@ The full development log, with benchmarks, problems found and fixes, is in Itali
 
 ## Emulator features
 
+- **Two views:** select a local ROM/folder, then play with both 3DS screens stacked above the
+  controls. The views share one document so local file access is not lost during launch.
+  On iPhone, use *Apri ROM* to select a game from Files.
+- **Touch controls:** multitouch A/B/X/Y, D-pad, L/R/ZL/ZR, Start/Select, draggable Circle Pad and
+  C-Stick. The lower screen remains touch-sensitive. Keyboard and gamepad controls still work.
+  Opening the menu, switching apps or losing focus releases held inputs.
+- **Game menu:** audio, speed, save sync, save states/backup, cheats, microphone/camera and
+  diagnostic logs. Diagnostics are hidden by default; only FPS/speed remain on the game view.
+  The menu does not pause emulation, but blocks gameplay input while open. *Cambia gioco*
+  confirms leaving, synchronizes existing saves and reloads the selection view; save your
+  progress in-game or in a state first. If synchronization fails, the current game stays open.
 - **Game library from a local folder:** choose a folder containing games (subfolders included).
   The games are never copied into the browser or uploaded: only the list is stored, and a game is
   read lazily from the folder when it is launched. Saves, states and cheats stay in the browser.
@@ -35,7 +46,7 @@ The full development log, with benchmarks, problems found and fixes, is in Itali
   permission again after a reload); Safari and Firefox use a folder selector whose access lasts
   only for the page session: after a reload, *Gioca* opens the folder selector and launches the
   game once the same folder is confirmed (browsers cannot preselect the folder path). To launch
-  another game, reload the page.
+  another game, use *Menu → Cambia gioco* (reloads the page).
 - **Save states:** three slots per game file. Load, overwrite or delete them in the page.
   States may be incompatible with another game or core version; keep normal in-game saves too.
   Slots use a fingerprint of the file size and sampled contents, not a full-file hash.
@@ -73,7 +84,7 @@ azahar-web/scripts/build.sh               # -> azahar-web/dist/
 python3 azahar-web/scripts/serve.py 8766  # http://localhost:8766/
 ```
 
-The focused archive, library and microphone tests can be run with Node.js 22.7 or later:
+The focused archive, library, touch input and microphone tests can be run with Node.js 22.7 or later:
 
 ```sh
 node --test azahar-web/tests/*.test.mjs

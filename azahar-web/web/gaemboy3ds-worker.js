@@ -1,8 +1,8 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=18';
-import { createSaveArchive } from './gaemboy3ds-archive.js?v=18';
+import createGaemboy3DS from './gaemboy3ds.js?v=19';
+import { createSaveArchive } from './gaemboy3ds-archive.js?v=19';
 const ASSET_VERSION = '16';
 
 const SAVES = '/gaemboy/3ds/saves';
@@ -296,6 +296,9 @@ async function command(action, data) {
   if (!mod) throw new Error('Emulatore non ancora pronto.');
   if (storageError) throw new Error(`Salvataggi non disponibili: ${storageError}`);
   switch (action) {
+    case 'sync-saves':
+      await syncSaves('cambio gioco');
+      return {};
     case 'slots':
       return { slots: listSlots() };
     case 'save-state': {

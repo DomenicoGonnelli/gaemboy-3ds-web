@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>GAEMBOY 3DS LAB — Azahar in WebAssembly</title>
 <style>
   :root { color-scheme: dark; font-family: system-ui, -apple-system, sans-serif; }
@@ -50,28 +50,26 @@
   #lib-list .game { flex: 1; overflow-wrap: anywhere; font-size: .85rem; }
   #lib-list .meta { color: #9aa0a6; font-size: .75rem; white-space: nowrap; }
 </style>
+<link rel="stylesheet" href="./gaemboy3ds-ui.css?v=19">
 </head>
 <body>
-<h1>GAEMBOY 3DS LAB — Azahar (core completo) in WebAssembly</h1>
-<p class="sub">Emulatore 3DS Azahar compilato con Emscripten (CPU FastInterp, renderer WebGL2 / software con ?sw, kernel e servizi HLE) in un Web Worker.
-  Il gioco viene letto <b>localmente</b> a blocchi, senza caricarlo in memoria per intero e senza upload. Formati: <code>.3ds</code>/<code>.cci</code>/<code>.cxi</code>/<code>.app</code>
-  <b>decrittati</b> (dump della tua cartuccia) e homebrew <code>.3dsx</code>/<code>.elf</code>. I salvataggi restano nel browser (IndexedDB).</p>
-<div>
+<main>
+<section id="selection-view" aria-labelledby="selection-title">
+<h1 id="selection-title">GAEMBOY 3DS</h1>
+<p class="sub">Scegli una ROM o una cartella per iniziare. I giochi restano sul dispositivo, senza upload.</p>
+<div class="selection-actions">
+  <button id="pick" type="button">Apri ROM…</button><input id="file" type="file">
+  <button id="lib-pick" type="button" class="alt">Scegli cartella giochi…</button><input id="lib-dir" type="file" webkitdirectory multiple>
+</div>
+<details class="demo-picker">
+  <summary>Prova una demo senza ROM</summary>
   <button id="demo" data-file="SuperHaxagon.3dsx">Demo 2D: Super Haxagon (GPL)</button>
   <button id="demo3d" data-file="craftus_reloaded.3dsx">Demo 3D: Craftus Reloaded (MIT)</button>
-  <button id="pick" type="button">Carica gioco…</button><input id="file" type="file">
-  <button id="throttle" class="alt" disabled>Velocità: 60 fps</button>
-  <button id="audio" class="alt">Audio: on</button>
-  <button id="save" class="alt" disabled>Salva ora</button>
-  <button id="dl-log" class="alt">Scarica log</button>
-</div>
-<div id="notice" hidden></div>
-<div id="rom-info"></div>
-<section class="features" id="library" aria-label="Libreria giochi">
+</details>
+<section class="features" id="library" aria-label="Libreria giochi" hidden>
   <details open>
     <summary>Libreria giochi (cartella locale)</summary>
     <fieldset id="library-actions">
-      <button id="lib-pick" type="button">Scegli cartella giochi…</button><input id="lib-dir" type="file" webkitdirectory multiple>
       <button id="lib-refresh" type="button" class="alt" disabled>Aggiorna</button>
       <button id="lib-forget" type="button" class="alt" disabled>Dimentica cartella</button>
       <input id="lib-filter" type="search" placeholder="Cerca" aria-label="Cerca nella libreria" hidden>
@@ -84,36 +82,72 @@
       Su Safari e Firefox, dopo un ricaricamento, premi <b>Gioca</b> e conferma la stessa cartella: il gioco parte subito.</p>
   </details>
 </section>
-<div class="row">
-  <canvas id="screen" width="400" height="480"></canvas>
-  <div>
-    <table>
-      <tr><td>Stato</td><td id="s-status">—</td></tr>
-      <tr><td>Renderer</td><td id="s-renderer">—</td></tr>
-      <tr><td>Caricamento</td><td id="s-load">—</td></tr>
-      <tr><td>Frame emulati</td><td id="s-frames">—</td></tr>
-      <tr><td>FPS emulazione</td><td id="s-fps">—</td></tr>
-      <tr><td>Velocità (vs 3DS 59,83 fps)</td><td id="s-speed">—</td></tr>
-      <tr><td>Tempo per frame (media)</td><td id="s-ms">—</td></tr>
-      <tr><td>Dettaglio (ultimo secondo)</td><td id="s-perf">—</td></tr>
-      <tr><td>Audio</td><td id="s-audio">—</td></tr>
-      <tr><td>Input</td><td id="s-input">—</td></tr>
-      <tr><td>Salvataggi (IndexedDB)</td><td id="s-saves">—</td></tr>
-      <tr><td>Thread / memoria</td><td id="s-mem">—</td></tr>
-      <tr><td>Log del core</td><td id="s-log">—</td></tr>
-    </table>
-    <div class="keys">
-      <b>Tastiera</b>: <kbd>←↑→↓</kbd> D-pad · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>S</kbd> X · <kbd>A</kbd> Y ·
-      <kbd>Q</kbd>/<kbd>W</kbd> L/R · <kbd>E</kbd>/<kbd>R</kbd> ZL/ZR · <kbd>Invio</kbd> Start · <kbd>⌫</kbd> Select ·
-      <kbd>I J K L</kbd> Circle Pad · <kbd>T F G H</kbd> C-Stick<br>
-      <b>Gamepad</b>: tasti per posizione come sul 3DS (destra = A, basso = B), stick sinistro = Circle Pad, destro = C-Stick, grilletti = ZL/ZR.<br>
-      <b>Touch</b>: mouse o dito sullo schermo inferiore. Per cambiare gioco ricarica la pagina (la libreria resta disponibile).
+<p class="sub">Formati: .3ds / .cci / .cxi / .app decrittati e homebrew .3dsx / .elf.
+  Usa solo dump delle tue cartucce o homebrew. Salvataggi e stati restano nel browser.
+  Su iPhone puoi usare <b>Apri ROM</b> dall'app File; le prestazioni dipendono dal dispositivo.</p>
+</section>
+<section id="game-view" aria-label="Gioco" hidden>
+  <header class="game-header">
+    <h1 id="game-title">Gioco</h1>
+    <button id="open-menu" type="button" class="alt" aria-haspopup="dialog" aria-controls="game-menu">Menu</button>
+  </header>
+  <p id="game-status" role="status">Caricamento…</p>
+  <canvas id="screen" width="400" height="480" tabindex="-1" aria-label="Schermo superiore e inferiore del Nintendo 3DS"></canvas>
+  <fieldset id="touch-controls" disabled aria-label="Comandi touch">
+    <legend class="sr-only">Comandi touch</legend>
+    <div class="shoulders">
+      <button type="button" data-button="10">L</button>
+      <button type="button" data-button="12">ZL</button>
+      <button type="button" data-button="13">ZR</button>
+      <button type="button" data-button="11">R</button>
     </div>
+    <div class="control-deck">
+      <div class="stick-group">
+        <span>Circle Pad</span>
+        <div class="stick" data-stick="left" role="group" aria-label="Circle Pad: trascina per muoverti"><span class="stick-knob"></span></div>
+      </div>
+      <div class="button-cross face-buttons" role="group" aria-label="Pulsanti azione">
+        <button type="button" class="north" data-button="9">X</button>
+        <button type="button" class="west" data-button="1">Y</button>
+        <button type="button" class="east" data-button="8">A</button>
+        <button type="button" class="south" data-button="0">B</button>
+      </div>
+      <div class="button-cross dpad" role="group" aria-label="Croce direzionale">
+        <button type="button" class="north" data-button="4" aria-label="Su">↑</button>
+        <button type="button" class="west" data-button="6" aria-label="Sinistra">←</button>
+        <button type="button" class="east" data-button="7" aria-label="Destra">→</button>
+        <button type="button" class="south" data-button="5" aria-label="Giù">↓</button>
+      </div>
+      <div class="stick-group">
+        <span>C-Stick</span>
+        <div class="stick cstick" data-stick="right" role="group" aria-label="C-Stick: trascina per muovere la visuale"><span class="stick-knob"></span></div>
+      </div>
+    </div>
+    <div class="system-buttons">
+      <button type="button" data-button="2">Select</button>
+      <button type="button" data-button="3">Start</button>
+    </div>
+  </fieldset>
+</section>
+<div id="notice" role="status" hidden></div>
+</main>
+<dialog id="game-menu" aria-labelledby="menu-title">
+  <header class="game-header">
+    <h2 id="menu-title">Menu di gioco</h2>
+    <button id="close-menu" type="button" class="alt" autofocus>Chiudi</button>
+  </header>
+  <p class="sub">Il gioco continua mentre il menu è aperto; i comandi sono disattivati.</p>
+  <div id="rom-info"></div>
+  <div class="menu-actions">
+    <button id="audio" type="button" class="alt">Audio: on</button>
+    <button id="throttle" type="button" class="alt" disabled>Velocità: 60 fps</button>
+    <button id="save" type="button" class="alt" disabled>Salva ora</button>
+    <button id="back-library" type="button" class="alt">Cambia gioco</button>
   </div>
-</div>
+  <div id="menu-status" role="status"></div>
 <section class="features" aria-label="Funzioni emulatore">
   <div id="feature-status" role="status" aria-live="polite"></div>
-  <details open>
+  <details>
     <summary>Save state e backup</summary>
     <fieldset id="storage-actions" disabled>
       <label for="state-slot">Slot</label>
@@ -160,9 +194,38 @@
     <p>Il browser chiede il permesso solo quando attivi un dispositivo. Audio e immagini restano locali.
       Una sola fotocamera alimenta tutte quelle virtuali; la stereoscopia reale e gli effetti non sono supportati.</p>
   </details>
+  <details>
+    <summary>Diagnostica e comandi</summary>
+    <button id="dl-log" type="button" class="alt">Scarica log</button>
+    <table>
+      <tr><td>Stato</td><td id="s-status">—</td></tr>
+      <tr><td>Renderer</td><td id="s-renderer">—</td></tr>
+      <tr><td>Caricamento</td><td id="s-load">—</td></tr>
+      <tr><td>Frame emulati</td><td id="s-frames">—</td></tr>
+      <tr><td>FPS emulazione</td><td id="s-fps">—</td></tr>
+      <tr><td>Velocità (vs 3DS 59,83 fps)</td><td id="s-speed">—</td></tr>
+      <tr><td>Tempo per frame (media)</td><td id="s-ms">—</td></tr>
+      <tr><td>Dettaglio (ultimo secondo)</td><td id="s-perf">—</td></tr>
+      <tr><td>Audio</td><td id="s-audio">—</td></tr>
+      <tr><td>Input</td><td id="s-input">—</td></tr>
+      <tr><td>Salvataggi (IndexedDB)</td><td id="s-saves">—</td></tr>
+      <tr><td>Thread / memoria</td><td id="s-mem">—</td></tr>
+      <tr><td>Log del core</td><td id="s-log">—</td></tr>
+    </table>
+    <div class="keys">
+      <b>Tastiera</b>: <kbd>←↑→↓</kbd> D-pad · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>S</kbd> X · <kbd>A</kbd> Y ·
+      <kbd>Q</kbd>/<kbd>W</kbd> L/R · <kbd>E</kbd>/<kbd>R</kbd> ZL/ZR · <kbd>Invio</kbd> Start · <kbd>⌫</kbd> Select ·
+      <kbd>I J K L</kbd> Circle Pad · <kbd>T F G H</kbd> C-Stick<br>
+      <b>Gamepad</b>: tasti per posizione come sul 3DS (destra = A, basso = B), stick sinistro = Circle Pad, destro = C-Stick, grilletti = ZL/ZR.<br>
+      <b>Touch</b>: mouse o dito sullo schermo inferiore; comandi sotto gli schermi, anche con più dita.
+      Per cambiare gioco usa <b>Menu → Cambia gioco</b>.
+    </div>
+    <div id="log"></div>
+  </details>
 </section>
-<div id="log"></div>
-<footer>
+<p class="sub">Azahar in WebAssembly · <a href="https://github.com/DomenicoGonnelli/gaemboy-3ds-web">Codice sorgente, GPL v3+</a></p>
+</dialog>
+<footer id="selection-footer">
   Software libero sotto <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3 o successiva</a> ·
   <a id="source-link" href="https://github.com/DomenicoGonnelli/gaemboy-3ds-web">Codice sorgente</a> ·
   basato su <a href="https://github.com/azahar-emu/azahar">Azahar</a> (Citra Emulator Project / Azahar Emulator Project).<br>
@@ -182,6 +245,6 @@
     sessionStorage.removeItem('coi-reload');
   }
 </script>
-<script type="module" src="./gaemboy3ds-page.js?v=18"></script>
+<script type="module" src="./gaemboy3ds-page.js?v=19"></script>
 </body>
 </html>
