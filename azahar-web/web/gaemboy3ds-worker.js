@@ -1,9 +1,9 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=24';
-import { createSaveArchive } from './gaemboy3ds-archive.js?v=24';
-const ASSET_VERSION = '24';
+import createGaemboy3DS from './gaemboy3ds.js?v=25';
+import { createSaveArchive } from './gaemboy3ds-archive.js?v=25';
+const ASSET_VERSION = '25';
 
 const SAVES = '/gaemboy/3ds/saves';
 // libctru homebrew only start NDSP if sdmc:/3ds/dspfirm.cdc exists; Azahar's HLE DSP ignores
@@ -59,10 +59,10 @@ const GL_CATEGORY = {
   fbo: ['blitFramebuffer', 'framebufferTexture2D', 'framebufferRenderbuffer', 'bindFramebuffer',
     'invalidateFramebuffer', 'createFramebuffer', 'createTexture', 'deleteTexture', 'renderbufferStorage'],
 };
-const perf = { gl: {}, glCount: {}, file: 0, fileBytes: 0, fileCalls: 0, ticks: 0, tickMs: 0, tickMax: 0, long: [] };
+const perf = { gl: {}, glCount: {}, file: 0, fileBytes: 0, fileCalls: 0, fileHits: 0, ticks: 0, tickMs: 0, tickMax: 0, long: [] };
 const resetPerf = () => {
   perf.gl = {}; perf.glCount = {};
-  perf.file = perf.fileBytes = perf.fileCalls = perf.ticks = perf.tickMs = perf.tickMax = 0;
+  perf.file = perf.fileBytes = perf.fileCalls = perf.fileHits = perf.ticks = perf.tickMs = perf.tickMax = 0;
   perf.long = [];
 };
 const noteLong = (name, dt) => { if (perf.long.length < 20) perf.long.push(`${name} ${dt.toFixed(0)}ms`); };
@@ -131,6 +131,47 @@ function instrumentFileReads() {
     return r;
   };
 }
+// Picked files on Android (and sometimes iOS) cost ~80 ms per FileReaderSync call regardless of
+// size, so the core's many small reads stalled whole frames. Read the ROM in aligned 1 MB blocks
+// and keep the most recent ones (LRU) so nearby reads are served from memory.
+const ROM_BLOCK = 1 << 20;
+const ROM_CACHE_BLOCKS = 64;
+function cacheWorkerfsReads(WORKERFS) {
+  const ops = WORKERFS.stream_ops;
+  if (ops.__gbCached) return;
+  ops.__gbCached = true;
+  const caches = new WeakMap();
+  const block = (blob, index) => {
+    let cache = caches.get(blob);
+    if (!cache) caches.set(blob, (cache = new Map()));
+    let data = cache.get(index);
+    if (data) {
+      cache.delete(index);
+      perf.fileHits++;
+    } else {
+      const start = index * ROM_BLOCK;
+      data = new Uint8Array(WORKERFS.reader.readAsArrayBuffer(blob.slice(start, Math.min(blob.size, start + ROM_BLOCK))));
+      if (cache.size >= ROM_CACHE_BLOCKS) cache.delete(cache.keys().next().value);
+    }
+    cache.set(index, data);
+    return data;
+  };
+  ops.read = (stream, buffer, offset, length, position) => {
+    const blob = stream.node.contents;
+    if (position >= blob.size) return 0;
+    const end = Math.min(blob.size, position + length);
+    let pos = position;
+    while (pos < end) {
+      const index = Math.floor(pos / ROM_BLOCK);
+      const data = block(blob, index);
+      const from = pos - index * ROM_BLOCK;
+      const n = Math.min(data.length - from, end - pos);
+      buffer.set(data.subarray(from, from + n), offset + (pos - position));
+      pos += n;
+    }
+    return end - position;
+  };
+}
 // The frontend schedules each frame through self.__gb3ds_mc (MessageChannel); wrap its handler
 // once it exists to time whole ticks (emulation + GL submission + throttle wait).
 function instrumentTicks() {
@@ -165,6 +206,7 @@ function flushPerf() {
     fileMs: Math.round(perf.file),
     fileKB: Math.round(perf.fileBytes / 1024),
     fileCalls: perf.fileCalls,
+    fileHits: perf.fileHits,
     long: perf.long,
   });
   resetPerf();
@@ -467,6 +509,7 @@ self.onmessage = async ({ data }) => {
         const { FS } = m;
         FS.mkdir('/rom');
         FS.mount(FS.filesystems.WORKERFS, { blobs: [{ name: romName, data: file }] }, '/rom');
+        cacheWorkerfsReads(FS.filesystems.WORKERFS);
         ensurePath(FS, SAVES);
         FS.mount(FS.filesystems.IDBFS, {}, SAVES);
         m.addRunDependency('gb3ds-idbfs');
