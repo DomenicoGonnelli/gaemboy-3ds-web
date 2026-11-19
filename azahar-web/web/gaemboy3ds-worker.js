@@ -1,9 +1,9 @@
 // Hosts the Emscripten module in a dedicated worker so the user's game file can be mounted with
 // WORKERFS: the core reads it lazily (FileReaderSync on slices), nothing is copied into memory or
 // uploaded anywhere. Saves live in IDBFS (IndexedDB) and are flushed periodically.
-import createGaemboy3DS from './gaemboy3ds.js?v=22';
-import { createSaveArchive } from './gaemboy3ds-archive.js?v=22';
-const ASSET_VERSION = '22';
+import createGaemboy3DS from './gaemboy3ds.js?v=23';
+import { createSaveArchive } from './gaemboy3ds-archive.js?v=23';
+const ASSET_VERSION = '23';
 
 const SAVES = '/gaemboy/3ds/saves';
 // libctru homebrew only start NDSP if sdmc:/3ds/dspfirm.cdc exists; Azahar's HLE DSP ignores
@@ -99,9 +99,30 @@ function instrumentFileReads() {
   if (!self.FileReaderSync) return;
   const P = FileReaderSync.prototype;
   const fn = P.readAsArrayBuffer;
+  // iOS Safari occasionally fails a read of a large picked file with NotReadableError (the file
+  // provider is momentarily busy); a failed read would abort the core, so retry with a short
+  // blocking backoff before giving up with an actionable message.
+  const sleeper = new Int32Array(new SharedArrayBuffer(4));
+  const RETRY_MS = [20, 50, 100, 200, 400, 800];
   P.readAsArrayBuffer = function (blob) {
     const t0 = performance.now();
-    const r = fn.call(this, blob);
+    let r;
+    for (let attempt = 0; ; attempt++) {
+      try {
+        r = fn.call(this, blob);
+        if (attempt) noteLong(`fileRead riuscita dopo ${attempt} tentativi`, performance.now() - t0);
+        break;
+      } catch (err) {
+        if (err?.name !== 'NotReadableError' || attempt >= RETRY_MS.length) {
+          if (err?.name === 'NotReadableError') {
+            throw new Error('Safari non riesce più a leggere il file del gioco (NotReadableError). ' +
+              'Ricarica la pagina e riapri il gioco; se succede spesso copia la ROM in «Sul mio iPhone».');
+          }
+          throw err;
+        }
+        Atomics.wait(sleeper, 0, 0, RETRY_MS[attempt]);
+      }
+    }
     const dt = performance.now() - t0;
     perf.file += dt;
     perf.fileCalls++;

@@ -2565,3 +2565,115 @@ index 69e1654..aff8a70 100644
          return;
      }
      using Clock = std::chrono::steady_clock;
+diff --git a/src/video_core/renderer_opengl/gl_shader_manager.cpp b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+index afccc8f..26223b5 100644
+--- a/src/video_core/renderer_opengl/gl_shader_manager.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+@@ -3,6 +3,7 @@
+ // Refer to the misc/licenses/gplv2.txt file included.
+ 
+ #include <algorithm>
++#include <chrono>
+ #include <mutex>
+ #include <set>
+ #include <span>
+@@ -336,7 +337,9 @@ public:
+     FragmentShaders fragment_shaders;
+     std::unordered_map<u64, OGLProgram> program_cache;
+ #ifdef __EMSCRIPTEN__
+-    std::unordered_set<GLuint> pending_programs;
++    // Pending link -> last time its completion was polled (Safari's COMPLETION_STATUS query can
++    // block on the GPU process, so each program is polled at most once per interval).
++    std::unordered_map<GLuint, std::chrono::steady_clock::time_point> pending_programs;
+     std::unordered_set<GLuint> failed_programs;
+ #endif
+     OGLPipeline pipeline;
+@@ -468,19 +471,35 @@ bool ShaderProgramManager::ApplyTo(OpenGLState& state, bool accurate_mul, bool w
+             // Link in the background (KHR_parallel_shader_compile) and skip draws until it is
+             // ready, like the Vulkan async shader path, instead of stalling the frame.
+             if (HasParallelShaderCompile()) {
+-                PumpWebShaderWarmup();
++                // Game shaders take priority: warm-up pauses while a recently drawn one is
++                // linking (stale entries that are no longer drawn do not hold it back).
++                const auto now = std::chrono::steady_clock::now();
++                const bool game_links_pending = std::any_of(
++                    impl->pending_programs.begin(), impl->pending_programs.end(),
++                    [now](const auto& entry) {
++                        return now - entry.second < std::chrono::milliseconds{250};
++                    });
++                PumpWebShaderWarmup(game_links_pending);
+             }
+             if (cached_program.handle == 0) {
+                 cached_program.handle = LoadProgramDeferred(
+                     std::array{impl->current.vs, impl->current.gs, impl->current.fs});
+-                impl->pending_programs.insert(cached_program.handle);
++                impl->pending_programs.emplace(cached_program.handle,
++                                               std::chrono::steady_clock::time_point{});
+             }
+             if (impl->failed_programs.contains(cached_program.handle)) {
+                 return false;
+             }
+-            if (impl->pending_programs.contains(cached_program.handle)) {
++            if (const auto pending = impl->pending_programs.find(cached_program.handle);
++                pending != impl->pending_programs.end()) {
+                 // Never block on an unfinished link, whatever the draw size: a brief visual
+                 // fallback is preferred over a gameplay stall.
++                constexpr std::chrono::milliseconds poll_interval{16};
++                const auto now = std::chrono::steady_clock::now();
++                if (now - pending->second < poll_interval) {
++                    return false;
++                }
++                pending->second = now;
+                 if (!IsProgramLinkDone(cached_program.handle)) {
+                     return false;
+                 }
+diff --git a/src/video_core/renderer_opengl/gl_shader_util.cpp b/src/video_core/renderer_opengl/gl_shader_util.cpp
+index aff8a70..d8f257a 100644
+--- a/src/video_core/renderer_opengl/gl_shader_util.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_util.cpp
+@@ -39,9 +39,9 @@ constexpr std::size_t WEB_SHADER_CACHE_MAX_SOURCE_BYTES = 256 * 1024;
+ // Without KHR_parallel_shader_compile a link blocks the calling thread, so only a few programs are
+ // warmed up. With it, every cached program is warmed up in small time-boxed batches.
+ constexpr std::size_t WEB_SHADER_CACHE_SYNC_WARMUP = 4;
+-constexpr std::size_t WEB_SHADER_WARMUP_MAX_INFLIGHT = 4;
++constexpr std::size_t WEB_SHADER_WARMUP_MAX_INFLIGHT = 2;
+ constexpr std::size_t WEB_SHADER_WARMUP_SUBMITS_PER_PUMP = 2;
+-constexpr std::chrono::milliseconds WEB_SHADER_WARMUP_PUMP_INTERVAL{4};
++constexpr std::chrono::milliseconds WEB_SHADER_WARMUP_PUMP_INTERVAL{16};
+ constexpr std::chrono::milliseconds WEB_SHADER_WARMUP_PUMP_BUDGET{2};
+ 
+ struct WebShaderSource {
+@@ -502,7 +502,7 @@ void ReapWebWarmupPrograms() {
+ }
+ } // Anonymous namespace
+ 
+-void PumpWebShaderWarmup() {
++void PumpWebShaderWarmup(bool game_links_pending) {
+     // Without KHR_parallel_shader_compile every link blocks, so warm-up never runs mid-render.
+     if (!HasParallelShaderCompile() ||
+         (web_warmup_queue.empty() && web_warmup_inflight.empty())) {
+@@ -518,7 +518,7 @@ void PumpWebShaderWarmup() {
+     ReapWebWarmupPrograms();
+ 
+     std::size_t submitted = 0;
+-    while (!web_warmup_queue.empty() && web_warmup_inflight.size() < WEB_SHADER_WARMUP_MAX_INFLIGHT &&
++    while (!game_links_pending && !web_warmup_queue.empty() && web_warmup_inflight.size() < WEB_SHADER_WARMUP_MAX_INFLIGHT &&
+            submitted < WEB_SHADER_WARMUP_SUBMITS_PER_PUMP &&
+            Clock::now() - start < WEB_SHADER_WARMUP_PUMP_BUDGET) {
+         WebShaderProgramSource entry = std::move(web_warmup_queue.front());
+diff --git a/src/video_core/renderer_opengl/gl_shader_util.h b/src/video_core/renderer_opengl/gl_shader_util.h
+index 8fc1434..3239236 100644
+--- a/src/video_core/renderer_opengl/gl_shader_util.h
++++ b/src/video_core/renderer_opengl/gl_shader_util.h
+@@ -40,8 +40,9 @@ GLuint LoadProgramDeferred(std::span<const GLuint> shaders);
+ void LoadWebShaderProgramCache();
+ 
+ /// Submits a time-boxed batch of queued warm-up links and validates finished ones. Cheap when
+-/// idle; call from the GL thread (e.g. once per draw).
+-void PumpWebShaderWarmup();
++/// idle; call from the GL thread (e.g. once per draw). While game shaders are linking, no new
++/// warm-up links are submitted so the game's own shaders get the compiler first.
++void PumpWebShaderWarmup(bool game_links_pending = false);
+ 
+ /// Whether the context exposes KHR_parallel_shader_compile (enables it on first call).
+ bool HasParallelShaderCompile();

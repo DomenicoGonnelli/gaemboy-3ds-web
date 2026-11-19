@@ -10,8 +10,8 @@ const OFF = {
 };
 import {
   forgetRootHandle, gamesFromFileList, loadRootHandle, metadataOf, openGame, saveRootHandle, scanDirectoryHandle,
-} from './gaemboy3ds-library.js?v=22';
-import { bindTouchControls } from './gaemboy3ds-touch.js?v=22';
+} from './gaemboy3ds-library.js?v=23';
+import { bindTouchControls } from './gaemboy3ds-touch.js?v=23';
 
 const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
@@ -254,7 +254,7 @@ function boot(file) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=22', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=23', { type: 'module' });
   $('selection-view').hidden = $('selection-footer').hidden = true;
   $('game-view').hidden = false;
   document.body.classList.add('playing');
@@ -265,6 +265,7 @@ function boot(file) {
   window.scrollTo(0, 0);
   renderLibrary();
   worker.onerror = (e) => {
+    watchdog.reported = true;
     const msg = `${e.message || 'errore sconosciuto'} (${e.filename || '?'}:${e.lineno || '?'})`;
     log(`[worker] ${msg}`);
     $('game-status').textContent = 'Errore: apri il Menu per cambiare gioco.';
@@ -896,7 +897,7 @@ async function startMicrophone() {
   microphoneStream = stream;
   try {
     microphoneContext = new AudioContext({ latencyHint: 'interactive' });
-    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=22');
+    await microphoneContext.audioWorklet.addModule('./gaemboy3ds-microphone.js?v=23');
     if (!pageActive) throw new Error('Pagina chiusa.');
     microphoneBuffer = new SharedArrayBuffer(12 + 65536 * 2);
     microphoneNode = new AudioWorkletNode(microphoneContext, 'gaemboy3ds-microphone', {
