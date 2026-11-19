@@ -60,6 +60,13 @@ The full development log, with benchmarks, problems found and fixes, is in Itali
   Capture stays local and stops when disabled or the page closes. One physical camera supplies all
   virtual cameras; stereoscopic capture and camera effects are not supported. Availability depends
   on browser support and a secure context (HTTPS or localhost).
+- **Shader warm-up (WebGL):** on contexts exposing `KHR_parallel_shader_compile`, all cached
+  shaders from previous web sessions are queued and warmed up in small, bounded batches during
+  rendering. For any new shader, including small draws such as copies and UI quads, the draw is
+  skipped until its compile completes instead of blocking the page. Without the extension, the four
+  newest cached shaders are warmed up synchronously during startup, and compiling a new shader may
+  block. First-use hitches and briefly missing geometry can still occur, behavior depends on the
+  browser and GPU driver, and no general performance improvement is claimed.
 
 ## Repository layout
 

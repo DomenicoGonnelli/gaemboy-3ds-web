@@ -2180,3 +2180,388 @@ index d926059..c3b7664 100644
  /// Whether the context exposes KHR_parallel_shader_compile (enables it on first call).
  bool HasParallelShaderCompile();
  
+diff --git a/src/video_core/renderer_opengl/gl_shader_manager.cpp b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+index ed1d397..88c1402 100644
+--- a/src/video_core/renderer_opengl/gl_shader_manager.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+@@ -337,6 +337,7 @@ public:
+     std::unordered_map<u64, OGLProgram> program_cache;
+ #ifdef __EMSCRIPTEN__
+     std::unordered_set<GLuint> pending_programs;
++    std::unordered_set<GLuint> failed_programs;
+ #endif
+     OGLPipeline pipeline;
+     ShaderDiskCache disk_cache;
+@@ -466,18 +467,28 @@ bool ShaderProgramManager::ApplyTo(OpenGLState& state, bool accurate_mul, bool w
+         if (g_web_shader_mode == 1) {
+             // Link in the background (KHR_parallel_shader_compile) and skip draws until it is
+             // ready, like the Vulkan async shader path, instead of stalling the frame.
++            PumpWebShaderWarmup();
+             if (cached_program.handle == 0) {
+                 cached_program.handle = LoadProgramDeferred(
+                     std::array{impl->current.vs, impl->current.gs, impl->current.fs});
+                 impl->pending_programs.insert(cached_program.handle);
+             }
++            if (impl->failed_programs.contains(cached_program.handle)) {
++                return false;
++            }
+             if (impl->pending_programs.contains(cached_program.handle)) {
++                // Draws of 6 vertices or fewer (copies, UI quads) cannot be skipped without
++                // losing visible content, so they still wait for the link.
+                 if (!wait_built && !IsProgramLinkDone(cached_program.handle)) {
+                     return false;
+                 }
+-                FinalizeProgram(cached_program.handle,
+-                                fmt::format("{:016x}", unique_identifier));
++                const bool linked = FinalizeProgram(cached_program.handle,
++                                                    fmt::format("{:016x}", unique_identifier));
+                 impl->pending_programs.erase(cached_program.handle);
++                if (!linked) {
++                    impl->failed_programs.insert(cached_program.handle);
++                    return false;
++                }
+             }
+             state.draw.shader_program = cached_program.handle;
+             return true;
+@@ -646,6 +657,7 @@ void ShaderProgramManager::LoadDiskCache(const std::atomic_bool& stop_loading,
+         impl->program_cache.clear();
+ #ifdef __EMSCRIPTEN__
+         impl->pending_programs.clear();
++        impl->failed_programs.clear();
+ #endif
+         disk_cache.InvalidatePrecompiled();
+         dumps.clear();
+diff --git a/src/video_core/renderer_opengl/gl_shader_util.cpp b/src/video_core/renderer_opengl/gl_shader_util.cpp
+index 541e6cf..69e1654 100644
+--- a/src/video_core/renderer_opengl/gl_shader_util.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_util.cpp
+@@ -4,8 +4,10 @@
+ 
+ #include <algorithm>
+ #include <array>
++#include <chrono>
+ #include <cstdint>
+ #include <cstdio>
++#include <deque>
+ #include <fstream>
+ #include <string>
+ #include <unordered_map>
+@@ -34,8 +36,13 @@ constexpr std::array<char, 8> WEB_SHADER_CACHE_MAGIC{'G', 'B', '3', 'D', 'S', 'S
+ constexpr std::size_t WEB_SHADER_CACHE_MAX_BYTES = 4 * 1024 * 1024;
+ constexpr std::size_t WEB_SHADER_CACHE_MAX_ENTRIES = 256;
+ constexpr std::size_t WEB_SHADER_CACHE_MAX_SOURCE_BYTES = 256 * 1024;
+-constexpr std::size_t WEB_SHADER_CACHE_STARTUP_WARMUP = 24;
++// Without KHR_parallel_shader_compile a link blocks the calling thread, so only a few programs are
++// warmed up. With it, every cached program is warmed up in small time-boxed batches.
+ constexpr std::size_t WEB_SHADER_CACHE_SYNC_WARMUP = 4;
++constexpr std::size_t WEB_SHADER_WARMUP_MAX_INFLIGHT = 4;
++constexpr std::size_t WEB_SHADER_WARMUP_SUBMITS_PER_PUMP = 2;
++constexpr std::chrono::milliseconds WEB_SHADER_WARMUP_PUMP_INTERVAL{4};
++constexpr std::chrono::milliseconds WEB_SHADER_WARMUP_PUMP_BUDGET{2};
+ 
+ struct WebShaderSource {
+     GLenum type;
+@@ -52,6 +59,16 @@ std::unordered_map<GLuint, WebShaderSource> web_shader_sources;
+ std::unordered_map<GLuint, WebShaderProgramSource> web_pending_program_sources;
+ std::unordered_map<std::string, GLuint> web_preloaded_programs;
+ std::unordered_set<std::string> web_saved_programs;
++struct WebWarmupInflight {
++    std::string key;
++    GLuint program;
++};
++std::deque<WebShaderProgramSource> web_warmup_queue;
++std::unordered_set<std::string> web_warmup_queued_keys;
++std::vector<WebWarmupInflight> web_warmup_inflight;
++std::chrono::steady_clock::time_point web_warmup_last_pump{};
++std::size_t web_warmup_total = 0;
++std::size_t web_warmup_failed = 0;
+ std::vector<WebShaderProgramSource> web_shader_cache_entries;
+ std::size_t web_shader_cache_bytes = WEB_SHADER_CACHE_MAGIC.size();
+ bool web_shader_cache_loaded = false;
+@@ -256,6 +273,8 @@ GLuint LoadProgramDeferred(std::span<const GLuint> shaders) {
+             web_preloaded_programs.erase(preloaded);
+             return program_id;
+         }
++        // Requested before the warm-up reached it: this link replaces the queued one.
++        web_warmup_queued_keys.erase(source.key);
+     }
+ 
+     const GLuint program_id = glCreateProgram();
+@@ -355,33 +374,23 @@ void LoadWebShaderProgramCache() {
+         RewriteWebShaderCache();
+     }
+ 
+-    const std::size_t max_warmup =
+-        HasParallelShaderCompile() ? WEB_SHADER_CACHE_STARTUP_WARMUP : WEB_SHADER_CACHE_SYNC_WARMUP;
+-    const std::size_t warmup_start =
+-        web_shader_cache_entries.size() > max_warmup
+-            ? web_shader_cache_entries.size() - max_warmup
+-            : 0;
+-    std::size_t warmed = 0;
+-    for (std::size_t i = warmup_start; i < web_shader_cache_entries.size(); ++i) {
+-        const auto& entry = web_shader_cache_entries[i];
+-        const GLuint vertex = LoadShader(entry.vertex, GL_VERTEX_SHADER, "web shader cache");
+-        const GLuint fragment = LoadShader(entry.fragment, GL_FRAGMENT_SHADER, "web shader cache");
+-        if (vertex == 0 || fragment == 0) {
+-            continue;
++    const std::size_t max_warmup = HasParallelShaderCompile() ? web_shader_cache_entries.size()
++                                                              : WEB_SHADER_CACHE_SYNC_WARMUP;
++    const std::size_t warmup_start = web_shader_cache_entries.size() > max_warmup
++                                         ? web_shader_cache_entries.size() - max_warmup
++                                         : 0;
++    // Newest first: the programs seen most recently are the most likely to be needed again.
++    for (std::size_t i = web_shader_cache_entries.size(); i > warmup_start; --i) {
++        const auto& entry = web_shader_cache_entries[i - 1];
++        if (web_warmup_queued_keys.insert(entry.key).second) {
++            web_warmup_queue.push_back(entry);
+         }
+-        const std::array shaders{vertex, fragment};
+-        const GLuint program_id = glCreateProgram();
+-        glAttachShader(program_id, vertex);
+-        glAttachShader(program_id, fragment);
+-        glLinkProgram(program_id);
+-        web_preloaded_programs.insert_or_assign(entry.key, program_id);
+-        web_shader_sources.erase(vertex);
+-        web_shader_sources.erase(fragment);
+-        warmed++;
+     }
+-    if (warmed > 0) {
+-        LOG_INFO(Render_OpenGL, "Queued {} previously seen web shader programs for warm-up",
+-                 warmed);
++    web_warmup_total = web_warmup_queue.size();
++    if (web_warmup_total > 0) {
++        LOG_INFO(Render_OpenGL,
++                 "Queued {} previously seen web shader programs for batched warm-up",
++                 web_warmup_total);
+     }
+ }
+ 
+@@ -421,6 +430,99 @@ bool FinalizeProgram(GLuint program_id, const std::string& debug_name) {
+     BindWebProgramResources(program_id);
+     return true;
+ }
++
++namespace {
++bool SubmitWebWarmupProgram(const WebShaderProgramSource& entry) {
++    const GLuint vertex = LoadShader(entry.vertex, GL_VERTEX_SHADER, "web shader cache");
++    const GLuint fragment = LoadShader(entry.fragment, GL_FRAGMENT_SHADER, "web shader cache");
++    web_shader_sources.erase(vertex);
++    web_shader_sources.erase(fragment);
++    if (vertex == 0 || fragment == 0) {
++        if (vertex != 0) {
++            glDeleteShader(vertex);
++        }
++        if (fragment != 0) {
++            glDeleteShader(fragment);
++        }
++        return false;
++    }
++    const GLuint program_id = glCreateProgram();
++    glAttachShader(program_id, vertex);
++    glAttachShader(program_id, fragment);
++    glLinkProgram(program_id);
++    // Deletion is deferred by GL until the program itself is deleted.
++    glDeleteShader(vertex);
++    glDeleteShader(fragment);
++    web_preloaded_programs.insert_or_assign(entry.key, program_id);
++    web_warmup_inflight.push_back({entry.key, program_id});
++    return true;
++}
++
++void ReapWebWarmupPrograms() {
++    for (auto it = web_warmup_inflight.begin(); it != web_warmup_inflight.end();) {
++        const auto preloaded = web_preloaded_programs.find(it->key);
++        if (preloaded == web_preloaded_programs.end() || preloaded->second != it->program) {
++            // A draw already took ownership of this program; it validates the link itself.
++            it = web_warmup_inflight.erase(it);
++            continue;
++        }
++        if (!IsProgramLinkDone(it->program)) {
++            ++it;
++            continue;
++        }
++        GLint result = GL_FALSE;
++        glGetProgramiv(it->program, GL_LINK_STATUS, &result);
++        if (result != GL_TRUE) {
++            GLint length = 0;
++            glGetProgramiv(it->program, GL_INFO_LOG_LENGTH, &length);
++            std::vector<char> log(std::max<GLint>(length, 1));
++            glGetProgramInfoLog(it->program, length, nullptr, log.data());
++            LOG_ERROR(Render_OpenGL, "Error linking cached web shader program:\n{}", log.data());
++            LogAttachedShaderErrors(it->program, "web shader cache");
++            glDeleteProgram(it->program);
++            web_preloaded_programs.erase(preloaded);
++            web_warmup_failed++;
++        }
++        it = web_warmup_inflight.erase(it);
++    }
++}
++} // Anonymous namespace
++
++void PumpWebShaderWarmup() {
++    if (web_warmup_queue.empty() && web_warmup_inflight.empty()) {
++        return;
++    }
++    using Clock = std::chrono::steady_clock;
++    const auto start = Clock::now();
++    if (start - web_warmup_last_pump < WEB_SHADER_WARMUP_PUMP_INTERVAL) {
++        return;
++    }
++    web_warmup_last_pump = start;
++
++    ReapWebWarmupPrograms();
++
++    std::size_t submitted = 0;
++    while (!web_warmup_queue.empty() && web_warmup_inflight.size() < WEB_SHADER_WARMUP_MAX_INFLIGHT &&
++           submitted < WEB_SHADER_WARMUP_SUBMITS_PER_PUMP &&
++           Clock::now() - start < WEB_SHADER_WARMUP_PUMP_BUDGET) {
++        WebShaderProgramSource entry = std::move(web_warmup_queue.front());
++        web_warmup_queue.pop_front();
++        if (web_warmup_queued_keys.erase(entry.key) == 0 ||
++            web_preloaded_programs.contains(entry.key)) {
++            continue;
++        }
++        if (!SubmitWebWarmupProgram(entry)) {
++            web_warmup_failed++;
++            continue;
++        }
++        submitted++;
++    }
++
++    if (web_warmup_queue.empty() && web_warmup_inflight.empty()) {
++        LOG_INFO(Render_OpenGL, "Web shader warm-up finished: {} queued, {} failed",
++                 web_warmup_total, web_warmup_failed);
++    }
++}
+ #endif
+ 
+ GLuint LoadShader(std::string_view source, GLenum type, const std::string& debug_name) {
+diff --git a/src/video_core/renderer_opengl/gl_shader_util.h b/src/video_core/renderer_opengl/gl_shader_util.h
+index c3b7664..8fc1434 100644
+--- a/src/video_core/renderer_opengl/gl_shader_util.h
++++ b/src/video_core/renderer_opengl/gl_shader_util.h
+@@ -36,9 +36,13 @@ extern int g_web_shader_mode;
+ /// Starts linking a program without any blocking status query (KHR_parallel_shader_compile).
+ GLuint LoadProgramDeferred(std::span<const GLuint> shaders);
+ 
+-/// Loads previously seen web shader programs and queues them for compilation during startup.
++/// Reads the persisted web shader cache and queues its programs for batched warm-up.
+ void LoadWebShaderProgramCache();
+ 
++/// Submits a time-boxed batch of queued warm-up links and validates finished ones. Cheap when
++/// idle; call from the GL thread (e.g. once per draw).
++void PumpWebShaderWarmup();
++
+ /// Whether the context exposes KHR_parallel_shader_compile (enables it on first call).
+ bool HasParallelShaderCompile();
+ 
+diff --git a/src/video_core/renderer_opengl/gl_shader_manager.cpp b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+index 88c1402..afccc8f 100644
+--- a/src/video_core/renderer_opengl/gl_shader_manager.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_manager.cpp
+@@ -467,7 +467,9 @@ bool ShaderProgramManager::ApplyTo(OpenGLState& state, bool accurate_mul, bool w
+         if (g_web_shader_mode == 1) {
+             // Link in the background (KHR_parallel_shader_compile) and skip draws until it is
+             // ready, like the Vulkan async shader path, instead of stalling the frame.
+-            PumpWebShaderWarmup();
++            if (HasParallelShaderCompile()) {
++                PumpWebShaderWarmup();
++            }
+             if (cached_program.handle == 0) {
+                 cached_program.handle = LoadProgramDeferred(
+                     std::array{impl->current.vs, impl->current.gs, impl->current.fs});
+@@ -477,9 +479,9 @@ bool ShaderProgramManager::ApplyTo(OpenGLState& state, bool accurate_mul, bool w
+                 return false;
+             }
+             if (impl->pending_programs.contains(cached_program.handle)) {
+-                // Draws of 6 vertices or fewer (copies, UI quads) cannot be skipped without
+-                // losing visible content, so they still wait for the link.
+-                if (!wait_built && !IsProgramLinkDone(cached_program.handle)) {
++                // Never block on an unfinished link, whatever the draw size: a brief visual
++                // fallback is preferred over a gameplay stall.
++                if (!IsProgramLinkDone(cached_program.handle)) {
+                     return false;
+                 }
+                 const bool linked = FinalizeProgram(cached_program.handle,
+diff --git a/src/video_core/renderer_opengl/gl_shader_manager.h b/src/video_core/renderer_opengl/gl_shader_manager.h
+index 253f1f8..df2f627 100644
+--- a/src/video_core/renderer_opengl/gl_shader_manager.h
++++ b/src/video_core/renderer_opengl/gl_shader_manager.h
+@@ -53,7 +53,8 @@ public:
+     void UseFragmentShader(const Pica::RegsInternal& config, const Pica::Shader::UserConfig& user);
+ 
+     /// Binds the current program. Returns false when the program is still being built
+-    /// asynchronously and wait_built is false; the caller should skip the draw.
++    /// asynchronously; the caller should skip the draw. In web async shader mode wait_built is
++    /// ignored and an unfinished link is never waited for.
+     bool ApplyTo(OpenGLState& state, bool accurate_mul, bool wait_built = true);
+ 
+     u64 GetProgramID() const;
+diff --git a/src/video_core/renderer_opengl/gl_shader_util.cpp b/src/video_core/renderer_opengl/gl_shader_util.cpp
+index 69e1654..aff8a70 100644
+--- a/src/video_core/renderer_opengl/gl_shader_util.cpp
++++ b/src/video_core/renderer_opengl/gl_shader_util.cpp
+@@ -262,6 +262,8 @@ void BindWebProgramResources(GLuint program_id) {
+     }
+     glUseProgram(static_cast<GLuint>(prev_program));
+ }
++
++bool SubmitWebWarmupProgram(const WebShaderProgramSource& entry);
+ } // Anonymous namespace
+ 
+ GLuint LoadProgramDeferred(std::span<const GLuint> shaders) {
+@@ -374,23 +376,35 @@ void LoadWebShaderProgramCache() {
+         RewriteWebShaderCache();
+     }
+ 
+-    const std::size_t max_warmup = HasParallelShaderCompile() ? web_shader_cache_entries.size()
+-                                                              : WEB_SHADER_CACHE_SYNC_WARMUP;
++    const bool parallel_compile = HasParallelShaderCompile();
++    const std::size_t max_warmup =
++        parallel_compile ? web_shader_cache_entries.size() : WEB_SHADER_CACHE_SYNC_WARMUP;
+     const std::size_t warmup_start = web_shader_cache_entries.size() > max_warmup
+                                          ? web_shader_cache_entries.size() - max_warmup
+                                          : 0;
+     // Newest first: the programs seen most recently are the most likely to be needed again.
+     for (std::size_t i = web_shader_cache_entries.size(); i > warmup_start; --i) {
+         const auto& entry = web_shader_cache_entries[i - 1];
+-        if (web_warmup_queued_keys.insert(entry.key).second) {
+-            web_warmup_queue.push_back(entry);
++        if (parallel_compile) {
++            if (web_warmup_queued_keys.insert(entry.key).second) {
++                web_warmup_queue.push_back(entry);
++            }
++        } else if (SubmitWebWarmupProgram(entry)) {
++            web_warmup_total++;
++        } else {
++            web_warmup_failed++;
+         }
+     }
+-    web_warmup_total = web_warmup_queue.size();
++    if (parallel_compile) {
++        web_warmup_total = web_warmup_queue.size();
++    } else {
++        // Links are synchronous here and finish before this function returns; draws validate
++        // them through FinalizeProgram, so nothing needs tracking or pumping afterwards.
++        web_warmup_inflight.clear();
++    }
+     if (web_warmup_total > 0) {
+-        LOG_INFO(Render_OpenGL,
+-                 "Queued {} previously seen web shader programs for batched warm-up",
+-                 web_warmup_total);
++        LOG_INFO(Render_OpenGL, "Warming up {} previously seen web shader programs ({})",
++                 web_warmup_total, parallel_compile ? "batched" : "synchronous at startup");
+     }
+ }
+ 
+@@ -489,7 +503,9 @@ void ReapWebWarmupPrograms() {
+ } // Anonymous namespace
+ 
+ void PumpWebShaderWarmup() {
+-    if (web_warmup_queue.empty() && web_warmup_inflight.empty()) {
++    // Without KHR_parallel_shader_compile every link blocks, so warm-up never runs mid-render.
++    if (!HasParallelShaderCompile() ||
++        (web_warmup_queue.empty() && web_warmup_inflight.empty())) {
+         return;
+     }
+     using Clock = std::chrono::steady_clock;
