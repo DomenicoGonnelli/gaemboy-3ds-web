@@ -1,4 +1,4 @@
-/* GAEMBOY 3DS Home v5 — standalone GPL-3.0-or-later frontend adapter.
+/* GAEMBOY 3DS Home v5.1 — standalone GPL-3.0-or-later frontend adapter.
  * Does not modify the Azahar core or existing gameplay view.
  * Requires the underlying app's #library-list, original folder and refresh controls.
  */
@@ -71,6 +71,10 @@
   let folderName = '';
   let chosen = false;
   let didImport = false;
+  let selectionPending = false;
+  let scanActive = false;
+  let scanToken = 0;
+  let autoScanTimer = 0;
   let launchPending = false;
   let pollTimer = 0;
   let rebuildTimer = 0;
@@ -251,8 +255,20 @@
           lastHandle=handle; chosen=true; folderName=handle.name || folderName;
           void writeDB(PREF_STORE,'directory-handle',handle);
           if (root) {renderFolder(); scheduleRender();}
+          if (selectionPending) {
+            selectionPending=false;
+            // Let the native folder handler finish saving its own handle first.
+            scheduleAutomaticScan();
+          }
         }
         return handle;
+      }, err => {
+        if (selectionPending) {
+          selectionPending=false;
+          if (err?.name==='AbortError') setMessage('Selezione annullata. Nessuna modifica alla libreria.');
+          else setMessage('Impossibile accedere alla cartella: '+(err?.message||err),'error');
+        }
+        throw err;
       });
     };
   }
@@ -344,8 +360,10 @@
     root.querySelector('#gb3-folder-sub').textContent=folderName?'I file rimangono sul tuo dispositivo':'Seleziona una cartella contenente giochi 3DS';
     root.querySelector('#gb3-select').textContent=(folderName || chosen || games.length)?'Cambia cartella':'Scegli cartella';
     const enabled=!!(chosen||folderName||games.length);
-    root.querySelector('#gb3-scan').disabled=!enabled;
-    root.querySelector('#gb3-scan-empty').disabled=!enabled;
+    const update = root.querySelector('#gb3-scan');
+    // This is only a secondary action when a library already exists: never a second step.
+    update.hidden = !enabled || (!games.length && !didImport);
+    update.disabled = scanActive;
   }
   function getDecorativeTitle(title) {
     return (title.match(/[\p{L}\p{N}]+/gu)||[]).slice(0,2).map(w=>w[0]?.toUpperCase()).join('')||'3D';
@@ -438,7 +456,7 @@
     root.querySelector('#gb3-search').hidden=visibleGames.length===0;
     root.querySelector('#gb3-cover-toggle').hidden=visibleGames.length===0 || coverNames.length===0;
     root.querySelector('#gb3-cover-toggle').setAttribute('aria-pressed',String(coverOnline));
-    root.querySelector('#gb3-empty-title').textContent=visibleGames.length===0&&hiddenGames.size>0?'Nessun gioco visibile':didImport?'Nessuna ROM 3DS valida nella cartella':'Nessun gioco importato';
+    root.querySelector('#gb3-empty-title').textContent=scanActive?'Ricerca dei giochi in corso…':visibleGames.length===0&&hiddenGames.size>0?'Nessun gioco visibile':didImport?'Nessuna ROM 3DS valida nella cartella':'Nessun gioco importato';
     for(const g of visibleGames) void loadArtwork(g);
   }
   function refresh() {
@@ -451,11 +469,19 @@
     renderFolder();renderCards();
   }
   function scheduleRender() { clearTimeout(rebuildTimer);rebuildTimer=setTimeout(refresh,130); }
+  function scheduleAutomaticScan() {
+    clearTimeout(autoScanTimer);
+    setMessage('Cartella confermata. Sto cercando i giochi 3DS…');
+    // Avoid scanning synchronously before the original app stores the new handle.
+    autoScanTimer=setTimeout(() => importGames(true), 350);
+  }
   function chooseFolder() {
     const btn=originalButton(/^(?:scegli|cambia|seleziona)\s+cartella(?:\s+giochi)?/i);
     if(!btn){setMessage('Selettore cartella non disponibile in questa versione.','error');return;}
-    try{btn.click();setMessage('Conferma la cartella nel browser. Poi premi Importa ROM.');}
-    catch(e){setMessage('Impossibile aprire il selettore: '+e.message,'error');}
+    selectionPending=true;
+    clearTimeout(autoScanTimer);
+    try { btn.click();setMessage('Conferma la cartella nel browser: i giochi verranno cercati automaticamente.'); }
+    catch(e) { selectionPending=false;setMessage('Impossibile aprire il selettore: '+e.message,'error'); }
   }
   function openSingleGame() {
     const btn=originalButton(/^apri\s+rom/i);
@@ -473,13 +499,37 @@
     };
     pollTimer=setTimeout(check,400);
   }
-  function importGames() {
+  function importGames(fromPicker=false) {
+    if(scanActive) return;
     const btn=originalButton(/^aggiorna(?:\s|$)|^scansiona(?:\s|$)/i);
-    if(!btn){setMessage('Comando di scansione non disponibile.','error');return;}
-    didImport=true;setMessage('Sto cercando giochi 3DS nella cartella…');
-    try{btn.click();}catch(e){setMessage('Errore durante la scansione: '+e.message,'error');return;}
-    setTimeout(()=>{refresh();setMessage(games.length?`${games.length} ${games.length===1?'gioco disponibile':'giochi disponibili'} nella libreria.`:'Nessuna ROM 3DS valida è presente nella cartella.','info');},1800);
-    setTimeout(refresh,3000);
+    if(!btn){setMessage('Scansione non disponibile: il selettore originale non espone il comando Aggiorna.','error');return;}
+    if (btn.disabled) {
+      // The native app is scanning already. Wait and refresh the visible library.
+      setMessage('Sto cercando giochi 3DS nella cartella…');
+      setTimeout(()=>{refresh();setMessage(games.length?`${games.length} giochi disponibili nella libreria.`:'Controlla la cartella o riprova Aggiorna libreria.');},2000);
+      return;
+    }
+    didImport=true;scanActive=true;scanToken++;
+    const token=scanToken;
+    const before=readGames().map(g=>key(g)).join('\n');
+    setMessage('Sto cercando giochi 3DS nella cartella…');
+    displayedSnapshot=null;renderCards();renderFolder();
+    try {btn.click();}catch(e){scanActive=false;renderFolder();setMessage('Errore durante la scansione: '+e.message,'error');return;}
+    const start=Date.now();
+    const check=()=>{
+      if(token!==scanToken || !root) return;
+      refresh();
+      const current=readGames().map(g=>key(g)).join('\n');
+      const elapsed=Date.now()-start;
+      if(games.length && (!fromPicker || current!==before || elapsed>=1500)) {
+        scanActive=false;displayedSnapshot=null;renderCards();renderFolder();
+        setMessage(`${games.length} ${games.length===1?'gioco disponibile':'giochi disponibili'} nella libreria.`,'success');
+      } else if(elapsed>=10000) {
+        scanActive=false;displayedSnapshot=null;renderCards();renderFolder();
+        setMessage(games.length?`${games.length} giochi disponibili nella libreria.`:'Nessuna ROM 3DS valida è presente nella cartella.');
+      } else setTimeout(check,500);
+    };
+    setTimeout(check,500);
   }
   function build() {
     root=document.createElement('main');root.id='gb3-home';root.setAttribute('aria-label','Libreria Gaemboy 3DS');
@@ -490,7 +540,7 @@
         <div class="gb3-scroller" id="gb3-scroller">
         <section class="gb3-config" aria-label="Configurazione cartella">
           <div class="gb3-config-copy"><div class="gb3-config-icon">${icons.folder}</div><div><div class="gb3-eyebrow">CARTELLA GIOCHI</div><strong id="gb3-folder-name">Nessuna cartella selezionata</strong><p id="gb3-folder-sub">Seleziona una cartella contenente giochi 3DS</p></div></div>
-          <div class="gb3-config-buttons"><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-soft">Scegli cartella</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-main">${icons.refresh} Importa ROM</button></div>
+          <div class="gb3-config-buttons"><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-main">Scegli cartella</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-soft" hidden>${icons.refresh} Aggiorna libreria</button></div>
         </section>
         <div id="gb3-status" class="gb3-status" role="status" aria-live="polite" hidden></div>
         <section class="gb3-content" aria-label="Giochi Nintendo 3DS">
@@ -500,9 +550,9 @@
           <div class="gb3-empty" id="gb3-empty">
             <div class="gb3-empty-icon">${icons.folder}</div><h2 id="gb3-empty-title">Nessun gioco importato</h2>
             <p>Per giocare al 3DS non è necessario caricare ROM di grandi dimensioni nel browser. Scegli una cartella del dispositivo che contenga i giochi: verranno elencati senza duplicare i file.</p>
-            <div class="gb3-empty-cta"><button id="gb3-select-empty" type="button" class="gb3-button gb3-button-main">${icons.folder} Scegli cartella</button><button id="gb3-scan-empty" type="button" class="gb3-button gb3-button-soft">${icons.refresh} Importa ROM</button></div>
+            <div class="gb3-empty-cta"><button id="gb3-select-empty" type="button" class="gb3-button gb3-button-main">${icons.folder} Scegli cartella</button></div>
             <button class="gb3-single" id="gb3-single" type="button">Vuoi giocare senza creare una libreria? Apri un singolo file 3DS</button>
-            <div class="gb3-steps"><span><b>1</b> Scegli cartella</span><span><b>2</b> Importa ROM</span><span><b>3</b> Gioca</span></div>
+            <div class="gb3-steps"><span><b>1</b> Scegli cartella: ricerca automatica</span><span><b>2</b> Gioca</span></div>
           </div>
         </section>
         <footer class="gb3-footer"><span>GAEMBOY 3DS · Basato su Azahar · Non affiliato a Nintendo</span><span><a href="https://github.com/libretro-thumbnails/Nintendo_-_Nintendo_3DS" target="_blank" rel="noopener noreferrer">Copertine: Libretro</a> · <a href="${SOURCE}" target="_blank" rel="noopener noreferrer">Sorgenti GPLv3+</a></span></footer>
@@ -521,8 +571,7 @@
     document.body.append(root);
     root.querySelector('#gb3-select').addEventListener('click',chooseFolder);
     root.querySelector('#gb3-select-empty').addEventListener('click',chooseFolder);
-    root.querySelector('#gb3-scan').addEventListener('click',importGames);
-    root.querySelector('#gb3-scan-empty').addEventListener('click',importGames);
+    root.querySelector('#gb3-scan').addEventListener('click',()=>importGames(false));
     root.querySelector('#gb3-single').addEventListener('click',openSingleGame);
     root.querySelector('#gb3-restore-games').addEventListener('click',()=>void restoreRemoved());
     root.querySelector('#gb3-edit-modal').addEventListener('click',ev=>{if(ev.target.id==='gb3-edit-modal')ev.currentTarget.hidden=true;});
@@ -537,7 +586,11 @@
       const input=e.target;
       if(root.contains(input)||input.type!=='file'||!input.files?.length)return;
       const rel=input.files[0].webkitRelativePath||'';
-      if(rel.includes('/')){folderName=rel.split('/')[0];chosen=true;void writeDB(PREF_STORE,'folder-name',folderName);scheduleRender();}
+      if(rel.includes('/')) {
+        folderName=rel.split('/')[0];chosen=true;
+        void writeDB(PREF_STORE,'folder-name',folderName);scheduleRender();
+        if (selectionPending) {selectionPending=false;scheduleAutomaticScan();}
+      }
     },true);
     const obs=new MutationObserver(records=>{
       if(records.every(r=>root.contains(r.target)))return;

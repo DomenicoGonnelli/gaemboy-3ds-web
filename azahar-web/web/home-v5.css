@@ -130,3 +130,6 @@
 #gb3-home .gb3-dialog-row .gb3-dialog-save{background:#d61750;border-color:#e94b7c}
 @media(max-width:720px){#gb3-home .gb3-fake{max-height:140px}}
 #gb3-home .gb3-card.is-open .gb3-action-menu{left:7px;right:auto}
+
+/* v5.1: a single folder-selection step; the manual refresh is secondary. */
+#gb3-home .gb3-button[hidden]{display:none!important}
