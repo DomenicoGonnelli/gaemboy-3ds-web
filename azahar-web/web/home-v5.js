@@ -657,10 +657,70 @@
   let gb3HashCatalog = null;
   let gb3HashReady = false;
 
+  // GB3_SESSION_V537 -- keep native directory selection files alive on Safari.
+  // Copies only File object references, not the underlying ROM data. A browser
+  // reload clears this in-memory list: Safari requires user selection again.
+  const gb3PickedFiles=[];
+  const gb3GameFilePattern=/\.(?:3ds|3dsx|cci|cxi|app|elf)$/i;
+  function gb3Path(p){return String(p||'').replace(/\\/g,'/').replace(/^\.\//,'').toLowerCase();}
+  function gb3FindPickedGame(g){
+    const wanted=gb3Path(g.path||g.fileName);
+    const name=gb3Path(g.fileName||wanted.split('/').pop());
+    if(!name)return null;
+    // Also check live legacy inputs. Some native pickers retain their FileList;
+    // others clear it after scanning, hence the snapshot in gb3PickedFiles.
+    const live=[];
+    for(const input of document.querySelectorAll('input[type="file"]')){
+      if(root?.contains(input))continue;
+      if(input.files?.length) live.push(...Array.from(input.files));
+    }
+    const files=[...gb3PickedFiles,...live];
+    const exact=files.filter(file=>{
+      const rel=gb3Path(file.webkitRelativePath||file.name);
+      return rel===wanted||rel.endsWith('/'+wanted);
+    });
+    if(exact.length){
+      const paths=new Set(exact.map(f=>gb3Path(f.webkitRelativePath||f.name)));
+      return paths.size===1 ? exact[0] : null;
+    }
+    const byName=files.filter(file=>gb3Path(file.name)===name);
+    // Never guess when two different subfolders have the same ROM filename.
+    const differentPaths=new Set(byName.map(f=>gb3Path(f.webkitRelativePath||f.name)));
+    return differentPaths.size===1 ? byName[0] : null;
+  }
+  function gb3CaptureNativeFiles(event){
+    const input=event.target;
+    if(!input||input.tagName!=='INPUT'||input.type!=='file'||root?.contains(input))return;
+    const files=Array.from(input.files||[]);
+    if(!files.some(f=>gb3GameFilePattern.test(f.name)))return;
+    const selected=files.filter(f=>gb3GameFilePattern.test(f.name));
+    const directory=Boolean(input.webkitdirectory||input.hasAttribute('webkitdirectory')||
+      files.some(f=>String(f.webkitRelativePath||'').includes('/')));
+    if(directory)gb3PickedFiles.length=0; // a new directory replaces the old one
+    for(const file of selected){
+      const path=gb3Path(file.webkitRelativePath||file.name);
+      if(!gb3PickedFiles.some(f=>gb3Path(f.webkitRelativePath||f.name)===path)) gb3PickedFiles.push(file);
+    }
+    gb3HashStatus.clear(); // previous 'no file' errors must be retried
+    console.info('[GAEMBOY 3DS] Local files available for cover identification:',gb3PickedFiles.length);
+    setTimeout(()=>{if(gb3HashReady)gb3IdentifyVisibleGames();},350);
+  }
+  document.addEventListener('change',gb3CaptureNativeFiles,true);
+  // Some pickers trigger input before change; harmless if both fire.
+  document.addEventListener('input',gb3CaptureNativeFiles,true);
+  window.Gaemboy3DSCoverAccess={status:()=>({
+    sessionFiles:gb3PickedFiles.length,
+    directoryHandleAvailable:Boolean(lastHandle),
+    coverCatalogReady:gb3HashReady,
+    matchedCovers:gb3ExactCovers.size
+  })};
+
   async function gb3ReadGameFile(g) {
     const wanted = String(g.path || g.fileName || '').replace(/\\/g, '/');
     const name = String(g.fileName || wanted.split('/').pop() || '').split('/').pop();
     if (!name) return null;
+    const picked=gb3FindPickedGame(g);
+    if(picked)return picked;
     if (sessionFileList?.length) {
       const found = Array.from(sessionFileList).find(file => {
         const rel = String(file.webkitRelativePath || file.name).replace(/\\/g, '/');
