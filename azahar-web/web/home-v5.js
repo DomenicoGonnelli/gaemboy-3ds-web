@@ -663,30 +663,81 @@
   const gb3PickedFiles=[];
   const gb3GameFilePattern=/\.(?:3ds|3dsx|cci|cxi|app|elf)$/i;
   function gb3Path(p){return String(p||'').replace(/\\/g,'/').replace(/^\.\//,'').toLowerCase();}
-  function gb3FindPickedGame(g){
-    const wanted=gb3Path(g.path||g.fileName);
-    const name=gb3Path(g.fileName||wanted.split('/').pop());
-    if(!name)return null;
-    // Also check live legacy inputs. Some native pickers retain their FileList;
-    // others clear it after scanning, hence the snapshot in gb3PickedFiles.
-    const live=[];
+  // GB3_FILE_ASSOC_V539: resolve the File selected in Safari against the
+  // game's library metadata. Some native library rows use a display/legacy
+  // filename that differs from File.name. Never guess if >1 file/game exists.
+  let gb3FileAssociationReport={result:'not checked'};
+  const gb3NormalizedFilePath=value=>{
+    let raw=String(value||'').trim().replace(/\\/g,'/');
+    try {raw=decodeURIComponent(raw);}catch(_){}
+    return raw.normalize('NFC').toLocaleLowerCase('it')
+      .replace(/\/+/g,'/').replace(/^\.\//,'');
+  };
+  function gb3PickedCandidateFiles(){
+    const files=[...gb3PickedFiles];
+    if(sessionFileList?.length)files.push(...Array.from(sessionFileList));
     for(const input of document.querySelectorAll('input[type="file"]')){
       if(root?.contains(input))continue;
-      if(input.files?.length) live.push(...Array.from(input.files));
+      if(input.files?.length)files.push(...Array.from(input.files));
     }
-    const files=[...gb3PickedFiles,...live];
-    const exact=files.filter(file=>{
-      const rel=gb3Path(file.webkitRelativePath||file.name);
-      return rel===wanted||rel.endsWith('/'+wanted);
-    });
-    if(exact.length){
-      const paths=new Set(exact.map(f=>gb3Path(f.webkitRelativePath||f.name)));
-      return paths.size===1 ? exact[0] : null;
+    // Avoid counting one File twice when the browser emits change and input.
+    const unique=[];const references=new Set();const identities=new Set();
+    for(const file of files){
+      if(!file || !gb3GameFilePattern.test(String(file.name||'')))continue;
+      if(references.has(file))continue;
+      references.add(file);
+      // Safari may produce two File objects representing the same picker item.
+      // Distinguish same-named files in different subdirectories using the path.
+      const fingerprint=[gb3NormalizedFilePath(file.webkitRelativePath||file.name),
+        file.size,file.lastModified].join('|');
+      if(identities.has(fingerprint))continue;
+      identities.add(fingerprint);unique.push(file);
     }
-    const byName=files.filter(file=>gb3Path(file.name)===name);
-    // Never guess when two different subfolders have the same ROM filename.
-    const differentPaths=new Set(byName.map(f=>gb3Path(f.webkitRelativePath||f.name)));
-    return differentPaths.size===1 ? byName[0] : null;
+    return unique;
+  }
+  function gb3FindPickedGame(g){
+    const files=gb3PickedCandidateFiles();
+    const wanted=gb3NormalizedFilePath(g.path||g.fileName||'');
+    const basename=gb3NormalizedFilePath(g.fileName||wanted.split('/').pop()).split('/').pop();
+    const possiblePaths=file=>{
+      const rel=gb3NormalizedFilePath(file.webkitRelativePath||'');
+      const name=gb3NormalizedFilePath(file.name||'');
+      return [rel,name].filter(Boolean);
+    };
+    let exact=files.filter(file=>possiblePaths(file).some(path=>
+      wanted && (path===wanted||path.endsWith('/'+wanted))));
+    if(exact.length===1){
+      gb3FileAssociationReport={result:'path match',game:g.fileName,file:exact[0].name};
+      return exact[0];
+    }
+    if(exact.length>1){
+      gb3FileAssociationReport={result:'ambiguous full path',game:g.fileName,candidates:exact.length};
+      return null;
+    }
+    exact=files.filter(file=>gb3NormalizedFilePath(file.name).split('/').pop()===basename);
+    if(exact.length===1){
+      gb3FileAssociationReport={result:'filename match',game:g.fileName,file:exact[0].name};
+      return exact[0];
+    }
+    if(exact.length>1){
+      gb3FileAssociationReport={result:'ambiguous filename',game:g.fileName,candidates:exact.length};
+      return null;
+    }
+    // A Safari directory picker can return a single File while the native
+    // library exposes a different name (old metadata or renamed file). Only
+    // reconcile 1:1; with two or more games/files we never infer a pairing.
+    const catalogGames=games.filter(item=>gb3GameFilePattern.test(String(item.fileName||'')));
+    if(files.length===1 && catalogGames.length===1 &&
+        key(catalogGames[0])===key(g) && !scanActive){
+      const file=files[0];
+      gb3FileAssociationReport={result:'unique 1:1 fallback',game:g.fileName,file:file.name};
+      console.info('[GAEMBOY 3DS] Using unique single-file library mapping for cover identification:',
+        g.fileName,'->',file.name);
+      return file;
+    }
+    gb3FileAssociationReport={result:'no safe match',game:g.fileName,
+      candidates:files.map(f=>f.name),libraryGames:catalogGames.map(item=>item.fileName)};
+    return null;
   }
   function gb3CaptureNativeFiles(event){
     const input=event.target;
@@ -704,6 +755,7 @@
     gb3HashStatus.clear(); // previous 'no file' errors must be retried
     console.info('[GAEMBOY 3DS] Local files available for cover identification:',gb3PickedFiles.length);
     setTimeout(()=>{if(gb3HashReady)gb3IdentifyVisibleGames();},350);
+    setTimeout(()=>{if(gb3HashReady)gb3IdentifyVisibleGames();},1800);
   }
   document.addEventListener('change',gb3CaptureNativeFiles,true);
   // Some pickers trigger input before change; harmless if both fire.
@@ -739,6 +791,16 @@
     coverCatalogReady:gb3HashReady,
     matchedCovers:gb3ExactCovers.size
   })};
+
+  // On-device only: optional diagnostic for matching a saved game to a File.
+  window.Gaemboy3DSCoverAccess.debug=()=>({
+    ...window.Gaemboy3DSCoverAccess.status(),
+    library:games.map(g=>({name:g.fileName,path:g.path})),
+    selectedFiles:gb3PickedCandidateFiles().map(f=>({
+      name:f.name,relativePath:f.webkitRelativePath||'',size:f.size
+    })),
+    lastAssociation:gb3FileAssociationReport
+  });
 
   async function gb3ReadGameFile(g) {
     const wanted = String(g.path || g.fileName || '').replace(/\\/g, '/');
