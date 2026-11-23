@@ -611,4 +611,124 @@
     refresh();setTimeout(refresh,700);setTimeout(refresh,2500);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',build,{once:true});else build();
+
+  // GB3_HASH_V533_BRIDGE -- stable integration via function wrappers, no fragile HTML anchors.
+  const gb3ExactCovers = new Map();
+  const gb3HashStatus = new Map();
+  let gb3HashCatalog = null;
+  let gb3HashReady = false;
+
+  async function gb3ReadGameFile(g) {
+    const wanted = String(g.path || g.fileName || '').replace(/\\/g, '/');
+    const name = String(g.fileName || wanted.split('/').pop() || '').split('/').pop();
+    if (!name) return null;
+    if (sessionFileList?.length) {
+      const found = Array.from(sessionFileList).find(file => {
+        const rel = String(file.webkitRelativePath || file.name).replace(/\\/g, '/');
+        return rel === wanted || rel === name || rel.endsWith('/' + wanted) || rel.endsWith('/' + name);
+      });
+      if (found) return found;
+    }
+    if (!lastHandle || lastHandle.kind !== 'directory') return null;
+    try {
+      // Never prompt for filesystem permission during background cover identification.
+      if (typeof lastHandle.queryPermission === 'function' &&
+          await lastHandle.queryPermission({mode: 'read'}) !== 'granted') return null;
+      const parts = wanted.split('/').filter(Boolean);
+      if (parts[0] === lastHandle.name) parts.shift();
+      const lookup = async path => {
+        if (!path.length) return null;
+        let dir = lastHandle;
+        for (const part of path.slice(0, -1)) dir = await dir.getDirectoryHandle(part);
+        return (await dir.getFileHandle(path[path.length - 1])).getFile();
+      };
+      try { const file = await lookup(parts); if (file) return file; } catch (_) {}
+      try { const file = await lookup([name]); if (file) return file; } catch (_) {}
+      // The legacy list sometimes exposes filenames only. Bounded local search.
+      const stack = [{dir: lastHandle, depth: 0}];
+      let visited = 0;
+      while (stack.length && visited < 2500) {
+        const {dir, depth} = stack.pop();
+        for await (const [entryName, entry] of dir.entries()) {
+          if (++visited > 2500) break;
+          if (entry.kind === 'file' && entryName === name) return entry.getFile();
+          if (entry.kind === 'directory' && depth < 7) stack.push({dir: entry, depth: depth + 1});
+        }
+      }
+    } catch (e) {
+      console.info('[GAEMBOY 3DS] Cover lookup waiting for folder permission:', e?.message || e);
+    }
+    return null;
+  }
+
+  async function gb3IdentifyCover(g) {
+    const k = key(g);
+    const engine = window.Gaemboy3DSRomIdentity;
+    if (!engine || !gb3HashCatalog || !coverOnline || !coverNames.length) return;
+    const previous = gb3HashStatus.get(k);
+    if (previous === 'running' || previous === 'done' ||
+        (typeof previous === 'number' && Date.now() - previous < 5000)) return;
+    gb3HashStatus.set(k, 'running');
+    try {
+      const file = await gb3ReadGameFile(g);
+      if (!file) {gb3HashStatus.set(k, Date.now()); return;}
+      const cacheKey = 'rom-identity-v53-' + k;
+      let identity = await readDB(PREF_STORE, cacheKey);
+      if (!identity || identity.size !== file.size || identity.lastModified !== file.lastModified || identity.folder !== folderName) {
+        const result = await engine.fileIdentity(file);
+        identity = {sha1: result.sha1, serial: result.serial,
+          size: file.size, lastModified: file.lastModified, folder: folderName};
+        await writeDB(PREF_STORE, cacheKey, identity);
+      }
+      const hit = engine.findEntry(gb3HashCatalog, identity);
+      const cover = hit && engine.matchCover(hit.entry, coverNames, navigator.language || 'it');
+      if (cover && gb3ExactCovers.get(k) !== cover) {
+        gb3ExactCovers.set(k, cover);
+        displayedSnapshot = null;
+        renderCards();
+      }
+      if (hit) console.info('[GAEMBOY 3DS] Identified by ' + hit.method + ': ' + (g.fileName || g.title));
+      gb3HashStatus.set(k, 'done');
+    } catch (e) {
+      gb3HashStatus.set(k, Date.now());
+      console.warn('[GAEMBOY 3DS] Cover identification failed:', e);
+    }
+  }
+
+  function gb3IdentifyVisibleGames() {
+    if (!gb3HashReady || !coverOnline || !root || root.hidden) return;
+    for (const game of games) {
+      if (!hiddenGames.has(key(game))) void gb3IdentifyCover(game);
+    }
+  }
+
+  // Only a verified SHA-1 / serial match may supply an automatic online cover.
+  // User-selected artwork is preserved by the existing Home implementation.
+  matchCover = function(g) {
+    return coverOnline ? (gb3ExactCovers.get(key(g)) || '') : '';
+  };
+  const gb3OriginalMakeCard = makeCard;
+  makeCard = function(g) {
+    // Suppress the legacy, filename-derived image and its automatic fallback
+    // without changing the existing card layout, swipe menu or click handler.
+    return gb3OriginalMakeCard({...g, img: ''});
+  };
+  const gb3OriginalRenderCards = renderCards;
+  renderCards = function(...args) {
+    const result = gb3OriginalRenderCards.apply(this, args);
+    if (gb3HashReady && root && !root.hidden) queueMicrotask(gb3IdentifyVisibleGames);
+    return result;
+  };
+  const gb3OriginalCoverCatalog = getCoverCatalog;
+  getCoverCatalog = async function(...args) {
+    await gb3OriginalCoverCatalog.apply(this, args);
+    const engine = window.Gaemboy3DSRomIdentity;
+    if (!engine) {console.warn('[GAEMBOY 3DS] Cover engine script unavailable'); return;}
+    gb3HashCatalog = await engine.loadIndex();
+    gb3HashReady = Boolean(gb3HashCatalog);
+    displayedSnapshot = null;
+    renderCards();
+    gb3IdentifyVisibleGames();
+  };
+
 })();
