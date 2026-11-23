@@ -697,37 +697,56 @@
     return null;
   }
 
+  const gb3HashRetries=new Set();
+  // GB3_HASH_V535: metadata first, SHA-1 only when internal 3DS ID is unknown.
   async function gb3IdentifyCover(g) {
-    const k = key(g);
-    const engine = window.Gaemboy3DSRomIdentity;
-    if (!engine || !gb3HashCatalog || !coverOnline || !coverNames.length) return;
-    const previous = gb3HashStatus.get(k);
-    if (previous === 'running' || previous === 'done' ||
-        (typeof previous === 'number' && Date.now() - previous < 5000)) return;
-    gb3HashStatus.set(k, 'running');
+    const k=key(g), engine=window.Gaemboy3DSRomIdentity;
+    if(!engine||!gb3HashCatalog||!coverOnline)return;
+    const previous=gb3HashStatus.get(k);
+    if(previous==='running'||previous==='done'||
+       (typeof previous==='number'&&Date.now()-previous<5000))return;
+    gb3HashStatus.set(k,'running');
     try {
-      const file = await gb3ReadGameFile(g);
-      if (!file) {gb3HashStatus.set(k, Date.now()); return;}
-      const cacheKey = 'rom-identity-v53-' + k;
-      let identity = await readDB(PREF_STORE, cacheKey);
-      if (!identity || identity.size !== file.size || identity.lastModified !== file.lastModified || identity.folder !== folderName) {
-        const result = await engine.fileIdentity(file);
-        identity = {sha1: result.sha1, serial: result.serial,
-          size: file.size, lastModified: file.lastModified, folder: folderName};
-        await writeDB(PREF_STORE, cacheKey, identity);
+      const file=await gb3ReadGameFile(g);
+      if(!file){
+        gb3HashStatus.set(k,Date.now());
+        if(!gb3HashRetries.has(k)){
+          gb3HashRetries.add(k);
+          setTimeout(()=>{if(root&&!root.hidden)void gb3IdentifyCover(g);},5500);
+        }
+        console.info('[GAEMBOY 3DS] Cannot inspect '+g.fileName+': no readable folder reference. Select/confirm folder once.');
+        return;
       }
-      const hit = engine.findEntry(gb3HashCatalog, identity);
-      const cover = hit && engine.matchCover(hit.entry, coverNames, navigator.language || 'it');
-      if (cover && gb3ExactCovers.get(k) !== cover) {
-        gb3ExactCovers.set(k, cover);
-        displayedSnapshot = null;
-        renderCards();
+      const cacheKey='rom-identity-v535-'+k;
+      let identity=await readDB(PREF_STORE,cacheKey);
+      if(!identity||identity.size!==file.size||identity.lastModified!==file.lastModified||identity.folder!==folderName){
+        const header=await engine.quickIdentity(file);
+        identity={...header,size:file.size,lastModified:file.lastModified,folder:folderName};
+        let matched=engine.findEntry(gb3HashCatalog,identity);
+        if(!matched){
+          // Decrypted/modified ROMs may not match No-Intro SHA-1; only hash if
+          // both internal Title ID and product code were unrecognized.
+          const full=await engine.fileIdentity(file);
+          identity={...identity,sha1:full.sha1,serial:full.serial||identity.serial,
+            titleId:full.titleId||identity.titleId};
+        }
+        await writeDB(PREF_STORE,cacheKey,identity);
       }
-      if (hit) console.info('[GAEMBOY 3DS] Identified by ' + hit.method + ': ' + (g.fileName || g.title));
-      gb3HashStatus.set(k, 'done');
-    } catch (e) {
-      gb3HashStatus.set(k, Date.now());
-      console.warn('[GAEMBOY 3DS] Cover identification failed:', e);
+      const hit=engine.findEntry(gb3HashCatalog,identity);
+      const cover=hit&&engine.matchCover(hit.entry,coverNames,navigator.language||'it');
+      if(cover&&gb3ExactCovers.get(k)!==cover){
+        gb3ExactCovers.set(k,cover);displayedSnapshot=null;renderCards();
+      }
+      if(hit){
+        console.info('[GAEMBOY 3DS] Cover match ('+hit.method+') for '+g.fileName+': '+hit.entry.name+' - '+(cover?'found':'Libretro artwork unavailable'));
+      } else {
+        console.info('[GAEMBOY 3DS] Unknown ROM identity (no verified Title ID/product code/SHA-1) for '+g.fileName,
+          {titleId:identity.titleId||'',serial:identity.serial||''});
+      }
+      gb3HashStatus.set(k,'done');
+    } catch(e){
+      gb3HashStatus.set(k,Date.now());
+      console.warn('[GAEMBOY 3DS] Cover detection failed:',e);
     }
   }
 

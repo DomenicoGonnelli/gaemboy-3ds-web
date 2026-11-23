@@ -38,26 +38,38 @@ const SHA = (function () {
   };
 })();
 function ascii(buf,off,len){return String.fromCharCode(...buf.subarray(off,off+len)).replace(/\0.*$/,'').trim();}
-async function productCode(file){
-  if(file.size<0x200)return '';
+function titleId(h){
+  // NCCH program ID is a little-endian uint64 at +0x118. String avoids BigInt requirements.
+  return Array.from(h.subarray(0x118,0x120)).reverse().map(x=>x.toString(16).padStart(2,'0')).join('').toUpperCase();
+}
+async function headerIdentity(file){
+  if(file.size<0x200)return {serial:'',titleId:''};
   const header=new Uint8Array(await file.slice(0,0x200).arrayBuffer());
   const magic=ascii(header,0x100,4);
   let offset=0;
   if(magic==='NCSD'){
-    const dv=new DataView(header.buffer);offset=dv.getUint32(0x120,true)*0x200;
-    if(offset===0||offset>file.size-0x200)return '';
-  }else if(magic!=='NCCH')return '';
+    const dv=new DataView(header.buffer);
+    const partOffset=dv.getUint32(0x120,true);
+    const partSize=dv.getUint32(0x124,true);
+    offset=partOffset*0x200;
+    if(!partOffset||!partSize||offset>file.size-0x200)return {serial:'',titleId:''};
+  } else if(magic!=='NCCH')return {serial:'',titleId:''};
   const h=offset===0?header:new Uint8Array(await file.slice(offset,offset+0x200).arrayBuffer());
-  if(ascii(h,0x100,4)!=='NCCH')return '';
-  const code=ascii(h,0x150,16).toUpperCase();
-  return /^(CTR|KTR)-[A-Z]-[A-Z0-9]{4}$/.test(code)?code:'';
+  if(ascii(h,0x100,4)!=='NCCH')return {serial:'',titleId:''};
+  const serial=ascii(h,0x150,16).toUpperCase();
+  return {serial:/^(CTR|KTR)-[A-Z]-[A-Z0-9]{4}$/.test(serial)?serial:'',
+    titleId:titleId(h)};
 }
 self.onmessage=async ({data})=>{
-  const {id,file}=data||{};
+  const {id,file,mode}=data||{};
   if(!file||typeof file.slice!=='function'){self.postMessage({id,error:'Missing local File'});return;}
   try{
-    const serial=await productCode(file);
-    const sha1=await SHA(file,id);
-    self.postMessage({id,serial,sha1,size:file.size});
+    const info=await headerIdentity(file);
+    if(mode==='header'){
+      self.postMessage({id,...info,size:file.size});
+    } else {
+      const sha1=await SHA(file,id);
+      self.postMessage({id,...info,sha1,size:file.size});
+    }
   }catch(e){self.postMessage({id,error:String(e?.message||e)});}
 };

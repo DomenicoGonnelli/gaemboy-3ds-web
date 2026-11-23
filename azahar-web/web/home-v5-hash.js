@@ -1,18 +1,23 @@
-/* GAEMBOY 3DS Home: No-Intro identity (SHA-1, then NCCH product code) and Libretro cover. */
+/* GAEMBOY 3DS identity 5.3.5: title ID/product code first, SHA-1 for fallback. */
 (() => {
   'use strict';
-  const WORKER_URL='home-v5-hash-worker.js?v=5.3.3';
-  const INDEX_URL='home-v5-hashes.json?v=5.3.3';
+  const WORKER_URL='home-v5-hash-worker.js?v=5.3.5';
+  const HASH_INDEX_URL='home-v5-hashes.json?v=5.3.5';
+  const TITLE_INDEX_URL='home-v5-titles.json?v=5.3.5';
   const COVER_BASE='https://raw.githubusercontent.com/libretro-thumbnails/Nintendo_-_Nintendo_3DS/master/Named_Boxarts/';
-  let indexPromise=null, worker=null, queue=[],current=null,seq=0;
-  const pending=new Map();
+  const BUILTIN=[
+    {name:'Pokemon Alpha Sapphire (Europe) (En,Ja,Fr,De,Es,It,Ko)',region:'EUR',languages:'en,ja,fr,de,es,it,ko',titleId:'000400000011C500',serial:'CTR-ECLA'},
+    {name:'Pokemon Omega Ruby (Europe) (En,Ja,Fr,De,Es,It,Ko)',region:'EUR',languages:'en,ja,fr,de,es,it,ko',titleId:'000400000011C400',serial:'CTR-ECRA'}
+  ];
+  let indexPromise=null,worker=null,current=null,sequence=0;
+  const queue=[];
   const normalized=s=>String(s||'').replace(/\.(?:3ds|cci|cxi|3dsx|app|png)$/i,'')
     .replace(/\([^)]*\)/g,' ').replace(/\[[^\]]*\]/g,' ').replace(/&/g,' and ')
     .normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/gi,' ').trim().toLowerCase();
   function startNext(){
     if(current||!queue.length)return;
     current=queue.shift();
-    worker.postMessage({id:current.id,file:current.file});
+    worker.postMessage({id:current.id,file:current.file,mode:current.mode});
   }
   function getWorker(){
     if(worker)return worker;
@@ -26,66 +31,113 @@
       startNext();
     };
     worker.onerror=ev=>{
-      const error=new Error(ev.message||'Worker unavailable');
+      const error=new Error(ev.message||'3DS identity worker unavailable');
       if(current){current.reject(error);current=null;}
       queue.splice(0).forEach(job=>job.reject(error));
       worker.terminate();worker=null;
     };
     return worker;
   }
-  function fileIdentity(file){
+  function run(file,mode){
     getWorker();
-    return new Promise((resolve,reject)=>{queue.push({id:++seq,file,resolve,reject});startNext();});
+    return new Promise((resolve,reject)=>{queue.push({id:++sequence,file,mode,resolve,reject});startNext();});
+  }
+  function fileIdentity(file){return run(file,'sha1');}
+  function quickIdentity(file){return run(file,'header');}
+  function addTitle(index,row){
+    if(!row?.name)return;
+    const titleId=String(row.titleId||row.titleid||'').toUpperCase();
+    const serial=String(row.serial||'').toUpperCase();
+    const entry={name:row.name,serial,titleId,region:row.region||'',languages:row.languages||''};
+    if(/^[0-9A-F]{16}$/.test(titleId)){
+      if(!index.byTitleId.has(titleId))index.byTitleId.set(titleId,[]);
+      if(!index.byTitleId.get(titleId).some(e=>e.name===entry.name&&e.region===entry.region)) index.byTitleId.get(titleId).push(entry);
+    }
+    if(serial){
+      const variants=[serial];
+      if(/^CTR-[A-Z0-9]{4}$/.test(serial)) variants.push('CTR-P-'+serial.slice(4));
+      if(/^CTR-P-[A-Z0-9]{4}$/.test(serial)) variants.push('CTR-'+serial.slice(6));
+      for(const v of variants){
+        if(!index.byProductCode.has(v))index.byProductCode.set(v,[]);
+        if(!index.byProductCode.get(v).some(e=>e.name===entry.name&&e.region===entry.region))index.byProductCode.get(v).push(entry);
+      }
+    }
+  }
+  function score(row){
+    const region=String(row.region||'').toUpperCase();
+    const title=row.name||'';
+    return (region==='EUR'||region==='EUROPE'?40:region==='USA'?10:0)
+       +(/\bIt\b/i.test(String(row.languages||''))?15:0)
+       -( /\b(?:Demo|Beta|Proto)\b/i.test(title)?100:0);
+  }
+  function choose(rows){
+    if(!rows?.length)return null;
+    const names=new Set(rows.map(r=>normalized(r.name)));
+    // Never guess when different games share a product code / ID.
+    if(names.size!==1)return null;
+    return rows.slice().sort((a,b)=>score(b)-score(a))[0];
   }
   async function loadIndex(){
-    if(!indexPromise){indexPromise=fetch(INDEX_URL,{cache:'force-cache'}).then(r=>{
-      if(!r.ok)throw new Error('No-Intro index HTTP '+r.status);
-      return r.json();
-    }).then(db=>{
-      if(db.schema!==1 || !db.sha1 || typeof db.sha1!=='object')throw new Error('Invalid 3DS No-Intro index');
-      const bySerial=new Map();
-      for(const row of Object.values(db.sha1)){
-        if(!row?.serial)continue;
-        const k=row.serial.toUpperCase();
-        if(!bySerial.has(k))bySerial.set(k,[]);
-        if(!bySerial.get(k).some(v=>v.name===row.name))bySerial.get(k).push(row);
-      }
-      return {bySha1:db.sha1,bySerial};
-    }).catch(e=>{console.warn('[Gaemboy 3DS] SHA-1 catalog not loaded:',e);return null;});}
+    if(!indexPromise)indexPromise=(async()=>{
+      const index={bySha1:{},bySerial:new Map(),byTitleId:new Map(),byProductCode:new Map()};
+      for(const row of BUILTIN)addTitle(index,row);
+      const [hashResp,titleResp]=await Promise.allSettled([
+        fetch(HASH_INDEX_URL,{cache:'force-cache'}).then(r=>{if(!r.ok)throw new Error('SHA-1 '+r.status);return r.json();}),
+        fetch(TITLE_INDEX_URL,{cache:'force-cache'}).then(r=>{if(!r.ok)throw new Error('Title ID '+r.status);return r.json();})
+      ]);
+      if(hashResp.status==='fulfilled'&&hashResp.value?.schema===1){
+        index.bySha1=hashResp.value.sha1||{};
+        for(const row of Object.values(index.bySha1)){
+          if(!row?.serial)continue;
+          const k=String(row.serial).toUpperCase();
+          if(!index.bySerial.has(k))index.bySerial.set(k,[]);
+          index.bySerial.get(k).push(row);
+        }
+      }else console.warn('[GAEMBOY 3DS] SHA-1 catalog unavailable');
+      if(titleResp.status==='fulfilled'&&titleResp.value?.schema===1&&Array.isArray(titleResp.value.games)){
+        for(const row of titleResp.value.games)addTitle(index,row);
+      } else console.warn('[GAEMBOY 3DS] Title catalog unavailable: built-in mappings only');
+      return index;
+    })();
     return indexPromise;
-  }
-  function matchCover(meta,names,locale='it'){
-    if(!meta?.name||!Array.isArray(names)||!names.length)return '';
-    const target=normalized(meta.name),region=String(meta.name).match(/\((Europe|Italy|USA|Japan|World)\)/i)?.[1]?.toLowerCase()||'';
-    let result='',best=-1e9;
-    for(const n of names){
-      if(typeof n!=='string'||!n.toLowerCase().endsWith('.png')||n.includes('/')||n.includes('\\'))continue;
-      if(normalized(n)!==target)continue;
-      const italian=String(locale).toLowerCase().startsWith('it');
-      const exact=n.replace(/\.png$/i,'')===meta.name;
-      const tag=n.toLowerCase();
-      let score=(exact?55:0)+(region && tag.includes('('+region+')')?20:0);
-      if(italian){
-        if(tag.includes('(italy)'))score+=40;
-        else if(/\(europe\)/i.test(n) && /\([^)]*\bit\b[^)]*\)/i.test(n))score+=33;
-        else if(tag.includes('(europe)'))score+=25;
-        else if(tag.includes('(usa)'))score+=10;
-      }else if(region && tag.includes('('+region+')'))score+=25;
-      if(/\b(?:beta|proto|demo|kiosk)\b/i.test(n))score-=35;
-      if(score>best){best=score;result=n;}
-    }
-    return result ? COVER_BASE+encodeURIComponent(result):'';
   }
   function findEntry(index,identity){
     if(!index||!identity)return null;
     const sha=index.bySha1[String(identity.sha1||'').toLowerCase()];
-    if(sha)return {entry:sha,method:'sha1'};
-    const candidates=index.bySerial.get(String(identity.serial||'').toUpperCase())||[];
-    if(!candidates.length)return null;
-    // Serial identifies a title, not the exact ROM revision; choose the first
-    // non-beta edition only if all candidates describe the same normalized title.
-    if(new Set(candidates.map(v=>normalized(v.name))).size>1)return null;
-    return {entry:candidates.find(v=>!/\b(?:beta|proto|demo)\b/i.test(v.name))||candidates[0],method:'serial'};
+    if(sha)return {entry:sha,method:'SHA-1'};
+    const titleId=String(identity.titleId||'').toUpperCase();
+    const title=choose(index.byTitleId.get(titleId));
+    if(title)return {entry:title,method:'Title ID'};
+    const serial=String(identity.serial||'').toUpperCase();
+    const product=choose(index.byProductCode.get(serial))||choose(index.bySerial.get(serial));
+    if(product)return {entry:product,method:'product code'};
+    return null;
   }
-  window.Gaemboy3DSRomIdentity={loadIndex,fileIdentity,findEntry,matchCover,normalized};
+  function matchCover(meta,names,locale='it'){
+    if(!meta?.name)return '';
+    const target=normalized(meta.name);
+    if(!Array.isArray(names))names=[];
+    const preferred=String(locale).toLowerCase().startsWith('it');
+    let result='',best=-Infinity;
+    for(const name of names){
+      if(typeof name!=='string'||!name.toLowerCase().endsWith('.png')||/[\\/]/.test(name))continue;
+      if(normalized(name)!==target)continue;
+      const t=name.toLowerCase();
+      let s=0;
+      if(name.replace(/\.png$/i,'')===meta.name)s+=40;
+      if(t.includes('(europe)'))s+=preferred?55:25;
+      if(t.includes('(italy)'))s+=preferred?65:15;
+      if(t.includes('(usa)'))s+=10;
+      if(preferred&&/\([^)]*\bit\b[^)]*\)/i.test(name))s+=20;
+      if(/\b(?:demo|beta|proto|kiosk)\b/i.test(name))s-=100;
+      if(s>best){best=s;result=name;}
+    }
+    // Known cover paths also work when the manifest fails to load (e.g. 404).
+    if(!result&&target==='pokemon alpha sapphire')
+      result='Pokemon Alpha Sapphire (Europe) (En,Ja,Fr,De,Es,It,Ko) (Rev 2).png';
+    if(!result&&target==='pokemon omega ruby')
+      result='Pokemon Omega Ruby (Europe) (En,Ja,Fr,De,Es,It,Ko) (Rev 2).png';
+    return result?COVER_BASE+encodeURIComponent(result):'';
+  }
+  window.Gaemboy3DSRomIdentity={loadIndex,fileIdentity,quickIdentity,findEntry,matchCover,normalized};
 })();
