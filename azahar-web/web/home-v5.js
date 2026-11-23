@@ -643,7 +643,10 @@
     });
     void readDB(PREF_STORE,'hidden-games').then(v=>{if(Array.isArray(v)) {hiddenGames=new Set(v.filter(x=>typeof x==='string'));displayedSnapshot=null;renderCards();}});
     void readDB(PREF_STORE,'name-overrides').then(v=>{if(v && typeof v==='object' && !Array.isArray(v)){nameOverrides=v;games.forEach(g=>{if(nameOverrides[key(g)])g.title=nameOverrides[key(g)];});displayedSnapshot=null;renderCards();}});
-    void getCoverCatalog();
+    // On a deferred script, readyState is often 'interactive'. Build runs
+    // before the hash bridge below wraps getCoverCatalog(). Defer this
+    // call one microtask so the wrapper and Title ID index initialize.
+    queueMicrotask(() => void getCoverCatalog());
     refresh();setTimeout(refresh,700);setTimeout(refresh,2500);
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',build,{once:true});else build();
