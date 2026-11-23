@@ -708,6 +708,31 @@
   document.addEventListener('change',gb3CaptureNativeFiles,true);
   // Some pickers trigger input before change; harmless if both fire.
   document.addEventListener('input',gb3CaptureNativeFiles,true);
+
+  // GB3_DETACHED_PICKER_V538: native Safari folder picker may use a detached input.
+  // Such a change event never bubbles to document: listen on the input itself.
+  const gb3ObservedPickers=new WeakSet();
+  function gb3ObserveFilePicker(input){
+    if(!input || input.type!=='file' || root?.contains(input) || gb3ObservedPickers.has(input))return;
+    gb3ObservedPickers.add(input);
+    input.addEventListener('change',gb3CaptureNativeFiles,true);
+    input.addEventListener('input',gb3CaptureNativeFiles,true);
+  }
+  const gb3OriginalFileClick=HTMLInputElement.prototype.click;
+  HTMLInputElement.prototype.click=function(...args){
+    gb3ObserveFilePicker(this);
+    return Reflect.apply(gb3OriginalFileClick,this,args);
+  };
+  const gb3OriginalShowPicker=HTMLInputElement.prototype.showPicker;
+  if(typeof gb3OriginalShowPicker==='function'){
+    HTMLInputElement.prototype.showPicker=function(...args){
+      gb3ObserveFilePicker(this);
+      return Reflect.apply(gb3OriginalShowPicker,this,args);
+    };
+  }
+  // Also support long-lived attached inputs activated through an HTML label.
+  for(const input of document.querySelectorAll('input[type="file"]')) gb3ObserveFilePicker(input);
+
   window.Gaemboy3DSCoverAccess={status:()=>({
     sessionFiles:gb3PickedFiles.length,
     directoryHandleAvailable:Boolean(lastHandle),
