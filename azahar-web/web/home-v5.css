@@ -133,3 +133,254 @@
 
 /* v5.1: a single folder-selection step; the manual refresh is secondary. */
 #gb3-home .gb3-button[hidden]{display:none!important}
+
+
+/* Gaemboy official mini-card components, taken from GamesPage.css of supplied sources. */
+#gb3-home .row-action {
+  width: 60px;
+  height: 100%;
+  border: none;
+  background: transparent;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  transition: filter 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 0;
+  border-radius: 0;
+}
+#gb3-home .row-action.delete {
+  background: #d32b2b;
+}
+#gb3-home .row-action.edit {
+  background: #2d6cdf;
+}
+#gb3-home .row-action.share {
+  background: #21a179;
+}
+#gb3-home .row-action:hover {
+  filter: brightness(1.05);
+}
+#gb3-home .row-action-icon {
+  width: 26px;
+  height: 26px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+#gb3-home .row-action-icon svg {
+  width: 100%;
+  height: 100%;
+}
+#gb3-home .row-action-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  filter: brightness(0) invert(1);
+}
+#gb3-home .hero-art--fallback, #gb3-home .mini-art--fallback {
+  width: auto;
+  aspect-ratio: var(--fc-ratio, 1);
+}
+#gb3-home .mini-card {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+  touch-action: pan-y;
+  animation: poster-in 0.4s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+  animation-delay: calc(var(--i, 0) * 30ms);
+}
+@keyframes poster-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to   { opacity: 1; transform: none; }
+}
+#gb3-home .mini-card-actions {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  justify-content: flex-end;
+  align-items: stretch;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+#gb3-home .mini-card.open .mini-card-actions, #gb3-home .mini-card.swiping .mini-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+#gb3-home .mini-card-actions .row-action { width: 46px; font-size: 0; }
+#gb3-home .mini-card-actions .row-action-icon { width: 20px; height: 20px; }
+#gb3-home .mini-card-content {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  
+  min-height: 76px;
+  padding: 8px 10px;
+  border-radius: 16px;
+  border: 1px solid rgba(214, 23, 80, 0.25);
+  background: var(--brand-deep);
+  overflow: hidden;
+  cursor: pointer;
+  touch-action: pan-y;
+  transition: transform 0.2s ease;
+}
+#gb3-home .mini-card--solo {
+  grid-column: 1 / -1;
+}
+#gb3-home .mini-card--solo .mini-card-content {
+  min-height: 164px;
+  padding: 12px 16px;
+  gap: 18px;
+  border-radius: 22px;
+}
+#gb3-home .mini-card--solo .mini-art {
+  height: 140px;
+  border-radius: 14px;
+}
+#gb3-home .mini-card--solo .mini-name {
+  font-size: 20px;
+  line-height: 1.18;
+}
+#gb3-home .mini-card--solo .mini-date { font-size: 12px; }
+#gb3-home .mini-card.swiping .mini-card-content { transition: none; }
+#gb3-home .mini-fill, #gb3-home .mini-wash {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 42%;
+  right: 0;
+  pointer-events: none;
+}
+#gb3-home .mini-fill { background: var(--brand); }
+#gb3-home .mini-wash {
+  background-size: cover;
+  background-position: center 55%;
+  filter: grayscale(1);
+  opacity: 0.3;
+  overflow: hidden;
+  container-type: size;
+}
+#gb3-home .mini-veil {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(90deg,
+    var(--brand-deep) 0%,
+    var(--brand-deep) 48%,
+    transparent 100%);
+}
+#gb3-home .mini-art {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  height: 60px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: linear-gradient(160deg, #2b0a2a 0%, #16061a 100%);
+  box-shadow: 0 6px 14px -4px rgba(0, 0, 0, 0.7);
+}
+#gb3-home .mini-art img { height: 100%; width: auto; display: block; }
+#gb3-home .hero-art img.custom-cover, #gb3-home .mini-card .mini-art img.custom-cover, #gb3-home .mini-card:not(.mini-card--solo) .mini-art img.custom-cover { object-fit: cover; }
+#gb3-home .mini-info {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+#gb3-home .mini-name {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: #fff;
+  line-height: 1.2;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+#gb3-home .mini-date { font-size: 10px; color: rgba(255, 255, 255, 0.62); }
+#gb3-home .mini-card:not(.mini-card--solo) .mini-card-content {
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 158px;
+  padding: 12px 10px 16px;
+}
+#gb3-home .mini-card:not(.mini-card--solo) .mini-info {
+  align-items: center;
+  text-align: center;
+  width: 100%;
+}
+#gb3-home .mini-card:not(.mini-card--solo) .mini-name { text-align: center; }
+#gb3-home .mini-card:not(.mini-card--solo) .mini-art {
+  width: auto;
+  height: 76px;
+  border-radius: 10px;
+}
+#gb3-home .mini-card:not(.mini-card--solo) .mini-art img { width: auto; height: 100%; object-fit: contain; }
+#gb3-home .mini-card:not(.mini-card--solo) .mini-fill {
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: auto;
+  background: linear-gradient(180deg, transparent 40%, rgba(126, 42, 99, 0.55) 82%, var(--brand-soft) 100%);
+}
+#gb3-home .mini-card:not(.mini-card--solo) .mini-wash {
+  top: auto;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 60%;
+  background-size: cover;
+  background-position: center 30%;
+  transform: scale(1.5);
+  -webkit-mask-image: linear-gradient(180deg, transparent 0%, #000 60%, #000 76%, rgba(0, 0, 0, 0.15) 100%);
+  mask-image: linear-gradient(180deg, transparent 0%, #000 60%, #000 76%, rgba(0, 0, 0, 0.15) 100%);
+}
+#gb3-home .mini-card:not(.mini-card--solo) .mini-veil {
+  top: auto;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 52%;
+  background: linear-gradient(180deg, transparent, rgba(22, 6, 20, 0.58) 55%, rgba(22, 6, 20, 0.82));
+}
+
+/* 3DS adaptation of the original GamesPage mini-card (no extra label bar or menu dots). */
+#gb3-home .gb3-grid {grid-template-columns:repeat(auto-fill,minmax(150px,1fr));}
+#gb3-home .mini-card {min-width:0;isolation:isolate;border:0;background:#230020;}
+#gb3-home .mini-card-content {width:100%;min-height:158px;height:100%;padding:12px 10px 16px;display:flex;align-items:center;flex-direction:column;gap:8px;cursor:pointer;outline:0;}
+#gb3-home .mini-card-content:focus-visible {outline:2px solid #ffa0c8;outline-offset:-2px;}
+#gb3-home .mini-card-actions {justify-content:flex-end;background:#230020;}
+#gb3-home .mini-card-actions .row-action {width:46px;min-width:46px;}
+#gb3-home .mini-card-content .mini-art {order:2;z-index:2;min-height:76px;max-height:76px;display:grid;place-items:center;}
+#gb3-home .mini-card-content .mini-info {order:1;align-self:stretch;flex:0 0 auto;min-height:30px;justify-content:center;}
+#gb3-home .mini-card-content .mini-name {font-size:12.5px;font-weight:700;line-height:1.2;color:white;max-width:100%;text-align:center;}
+#gb3-home .mini-card-content .mini-veil {pointer-events:none;}
+#gb3-home .mini-card-content .mini-art img {height:76px;max-width:100%;width:auto;object-fit:contain;box-shadow:none;}
+#gb3-home .mini-card-content .mini-art--fallback {width:76px;background:transparent;box-shadow:none;overflow:visible;}
+#gb3-home .mini-card-content .mini-art--fallback .gb3-fake {width:76px;height:76px;max-width:76px;max-height:76px;min-width:0;transform:perspective(500px) rotateY(-6deg);}
+#gb3-home .mini-card-content .mini-art--fallback .gb3-fake-spine {font-size:7px;}
+#gb3-home .mini-card-content .mini-art--fallback .gb3-fake-title {font-size:clamp(7px,1.2vw,12px)!important;}
+#gb3-home .mini-card-content .mini-art--fallback .gb3-fake-sub {font-size:7px;}
+#gb3-home .mini-card-content .mini-art--fallback .gb3-fake-pokemon {font-size:11px;}
+#gb3-home .mini-card .row-action-icon {display:inline-flex;width:20px;height:20px;}
+#gb3-home .mini-card .row-action-icon img {height:100%;width:100%;filter:brightness(0) invert(1);object-fit:contain;}
+#gb3-home .mini-card.open .mini-card-actions,#gb3-home .mini-card.swiping .mini-card-actions {pointer-events:auto;}
+#gb3-home .mini-card.open .mini-card-content {transform:translateX(-138px);}
+#gb3-home .mini-card.swiping .mini-card-content {transition:none;}
+@media(max-width:720px) {#gb3-home .gb3-grid {grid-template-columns:repeat(2,minmax(0,1fr));}#gb3-home .mini-card-content {min-height:158px;}}
+@media(hover:none) {#gb3-home .mini-card:hover {transform:none;}}
+@media(prefers-reduced-motion:reduce){#gb3-home .mini-card-content{transition:none;}}

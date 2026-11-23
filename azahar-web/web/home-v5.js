@@ -1,4 +1,4 @@
-/* GAEMBOY 3DS Home v5.1 — standalone GPL-3.0-or-later frontend adapter.
+/* GAEMBOY 3DS Home v5.2 — standalone GPL-3.0-or-later frontend adapter.
  * Does not modify the Azahar core or existing gameplay view.
  * Requires the underlying app's #library-list, original folder and refresh controls.
  */
@@ -68,6 +68,7 @@
   let games = [];
   let filter = '';
   let lastHandle = null;
+  let sessionFileList = null; // Safari input directory files: kept until page unload (not persisted to disk).
   let folderName = '';
   let chosen = false;
   let didImport = false;
@@ -195,48 +196,69 @@
       coverNames=json.names;buildCoverMap();displayedSnapshot=null;renderCards();
     } catch(err) { console.info('[Gaemboy 3DS] Cover catalog unavailable:',err); }
   }
+  // Matches the original GamesPage mini-card: swipe LEFT exposes the three
+  // icon-only actions on the RIGHT; swipe RIGHT closes them.
   function setActions(g,card,open) {
-    if(openActionKey && openActionKey!==key(g)) {
-      root?.querySelectorAll('.gb3-card.is-open').forEach(el=>{el.classList.remove('is-open');el.querySelector('.gb3-action-menu')?.setAttribute('aria-expanded','false');});
-    }
+    root?.querySelectorAll('.mini-card.open').forEach(el=>{
+      if(el!==card){el.classList.remove('open');el.querySelector('.mini-card-content')?.style.removeProperty('transform');}
+    });
     openActionKey=open?key(g):'';
-    card.classList.toggle('is-open',open);
-    card.querySelector('.gb3-action-menu')?.setAttribute('aria-expanded',String(open));
+    card.classList.toggle('open',open);
+    card.querySelector('.mini-card-content')?.style.removeProperty('transform');
   }
   function wireSwipe(card,g) {
-    let startX=0,startY=0,lastX=0,tracking=false,dragged=false;
-    const face=card.querySelector('.gb3-card-face');
-    const finish=(ev, cancel=false)=>{
-      if(!tracking)return;
-      tracking=false;
-      if(ev.pointerId!==undefined && card.hasPointerCapture?.(ev.pointerId))card.releasePointerCapture(ev.pointerId);
-      const dx=lastX-startX;
-      const dy=(ev.clientY ?? startY)-startY;
-      card.classList.remove('is-swiping');
+    const face=card.querySelector('.mini-card-content');
+    const WIDTH=138, LOCK=12;
+    let gesture=null;
+    const end=(ev,cancel=false)=>{
+      if(!gesture)return;
+      const state=gesture;gesture=null;
+      card.classList.remove('swiping');
+      if(card.hasPointerCapture?.(ev.pointerId))card.releasePointerCapture(ev.pointerId);
       face.style.removeProperty('transform');
-      if(!cancel && dragged && Math.abs(dx)>46 && Math.abs(dx)>Math.abs(dy)*1.2){setActions(g,card,dx>0);}
-      if(dragged){card.dataset.swipeBlocked='1';setTimeout(()=>{if(card.isConnected)delete card.dataset.swipeBlocked;},170);}
-      dragged=false;
+      if(state.horizontal && !cancel){
+        const dx=state.x-state.startX;
+        // Preserve open state on a light accidental touch; require a clear drag.
+        const shouldOpen=state.wasOpen ? dx<6 : dx < -WIDTH/2;
+        setActions(g,card,shouldOpen);
+      }
+      if(state.horizontal){
+        card.dataset.swipeBlocked='1';
+        setTimeout(()=>{if(card.isConnected)delete card.dataset.swipeBlocked;},210);
+      }
     };
     card.addEventListener('pointerdown',ev=>{
-      if(!ev.isPrimary || ev.button!==0 || ev.target.closest('.gb3-action-menu,.gb3-change-cover'))return;
-      startX=lastX=ev.clientX;startY=ev.clientY;tracking=true;dragged=false;
+      if(!ev.isPrimary || (ev.pointerType==='mouse' && ev.button!==0) || ev.target.closest('.mini-card-actions'))return;
+      gesture={id:ev.pointerId,startX:ev.clientX,startY:ev.clientY,x:ev.clientX,y:ev.clientY,
+        axis:null,horizontal:false,wasOpen:card.classList.contains('open'),scroller:ev.pointerType==='mouse'?null:root.querySelector('.gb3-scroller')};
     });
     card.addEventListener('pointermove',ev=>{
-      if(!tracking)return;
-      const dx=ev.clientX-startX,dy=ev.clientY-startY;
-      if(Math.abs(dy)>Math.abs(dx)*1.2 && Math.abs(dy)>9){tracking=false;return;}
-      if(Math.abs(dx)>12 && Math.abs(dx)>Math.abs(dy)*1.2){
-        if(!dragged){dragged=true;try{card.setPointerCapture(ev.pointerId);}catch{}}lastX=ev.clientX;card.classList.add('is-swiping');
-        face.style.transform=`translateX(${Math.max(0,Math.min(138,dx+(card.classList.contains('is-open')?138:0)))}px)`;
+      if(!gesture || gesture.id!==ev.pointerId)return;
+      const s=gesture, previousY=s.y;s.x=ev.clientX;s.y=ev.clientY;
+      const dx=s.x-s.startX,dy=s.y-s.startY;
+      if(!s.axis){
+        if(Math.max(Math.abs(dx),Math.abs(dy))<LOCK)return;
+        s.axis=Math.abs(dx)>Math.abs(dy)*2?'horizontal':'vertical';
+      } else if(s.axis==='horizontal' && Math.abs(dy)>Math.abs(dx)){
+        s.axis='vertical';s.horizontal=false;card.classList.remove('swiping');face.style.removeProperty('transform');
       }
+      if(s.axis==='vertical'){
+        if(s.scroller) s.scroller.scrollTop+=previousY-s.y;
+        return;
+      }
+      if(!s.horizontal){
+        s.horizontal=true;card.classList.add('swiping');
+        try{card.setPointerCapture(ev.pointerId);}catch{}
+      }
+      ev.preventDefault();
+      face.style.transform=`translateX(${Math.max(-WIDTH,Math.min(0,(s.wasOpen?-WIDTH:0)+dx))}px)`;
     });
-    card.addEventListener('pointerup',ev=>finish(ev));
-    card.addEventListener('pointercancel',ev=>finish(ev,true));
+    card.addEventListener('pointerup',ev=>end(ev));
+    card.addEventListener('pointercancel',ev=>end(ev,true));
     card.addEventListener('keydown',ev=>{
-      if(ev.key==='Escape' && card.classList.contains('is-open')){setActions(g,card,false);ev.preventDefault();}
-      if(ev.key==='ArrowRight' && ev.target===card.querySelector('.gb3-cover')){setActions(g,card,true);ev.preventDefault();}
-      if(ev.key==='ArrowLeft' && ev.target===card.querySelector('.gb3-cover')){setActions(g,card,false);ev.preventDefault();}
+      if(ev.target!==face)return;
+      if(ev.key==='Escape' || ev.key==='ArrowRight'){setActions(g,card,false);ev.preventDefault();}
+      if(ev.key==='ArrowLeft'){setActions(g,card,true);ev.preventDefault();}
     });
   }
 
@@ -337,7 +359,7 @@
   function launch(g) {
     if (!g.element?.isConnected) {setMessage('Libreria aggiornata. Premi Importa ROM e riprova.','error');return;}
     launchPending=true;
-    root.hidden=true; // delegate to the existing implementation, including its permission dialog
+    root.hidden=true; // native player reuses in-page folder/file references when its own access is valid
     try {g.element.click();} catch(err){restoreHome();setMessage('Non riesco ad aprire il gioco: '+err.message,'error');return;}
     clearTimeout(pollTimer);
     const started=Date.now();
@@ -382,45 +404,58 @@
     displayedSnapshot=null;renderCards();setMessage('Copertina personalizzata rimossa.','success');
   }
   function makeCard(g) {
-    const card=document.createElement('article');card.className='gb3-card';
-    card.dataset.gameKey=key(g);
-    if(openActionKey===key(g)) card.classList.add('is-open');
-    const actions=document.createElement('div');actions.className='gb3-card-actions';
+    // DOM structure/classes are the same as GAEMBOY's GamesPage mini-card.
+    const card=document.createElement('article');card.className='mini-card';card.dataset.gameKey=key(g);
+    if(openActionKey===key(g))card.classList.add('open');
+    const actions=document.createElement('div');actions.className='mini-card-actions';
     const specs=[
-      ['edit','Modifica',icons.edit,()=>editGame(g)],
-      ['share','Condividi',icons.share,()=>void shareGame(g)],
-      ['delete','Elimina',icons.trash,()=>void removeFromLibrary(g)]
+      ['edit','Modifica','moreUserProfile.png',()=>editGame(g)],
+      ['share','Condividi','shareAppUserProfile.png',()=>void shareGame(g)],
+      ['delete','Elimina','deleteTeamUserProfile.png',()=>void removeFromLibrary(g)]
     ];
-    for(const [cl,label,svg,action] of specs) {
-      const btn=document.createElement('button');btn.type='button';btn.className='gb3-action gb3-action-'+cl;
+    for(const [cl,label,png,action] of specs){
+      const btn=document.createElement('button');btn.type='button';btn.className='row-action '+cl;
       btn.title=label;btn.setAttribute('aria-label',label+' '+g.title);
-      btn.innerHTML=svg+'<span>'+label+'</span>';
-      btn.addEventListener('click',ev=>{ev.stopPropagation();setActions(g,card,false);action();});actions.append(btn);
+      const ico=document.createElement('span');ico.className='row-action-icon';
+      const img=document.createElement('img');img.alt='';img.src='home-v5-assets/icons/'+png;ico.append(img);btn.append(ico);
+      btn.addEventListener('click',ev=>{ev.stopPropagation();setActions(g,card,false);action();});
+      actions.append(btn);
     }
-    const face=document.createElement('div');face.className='gb3-card-face';
-    const cover=document.createElement('button');cover.className='gb3-cover';cover.type='button';cover.setAttribute('aria-label','Gioca a '+g.title);
-    const wash=document.createElement('div');wash.className='gb3-cover-wash';cover.append(wash);
+    const face=document.createElement('div');face.className='mini-card-content';
+    face.tabIndex=0;face.setAttribute('role','button');face.setAttribute('aria-label','Gioca a '+g.title);
+    const fill=document.createElement('div');fill.className='mini-fill';
+    const wash=document.createElement('div');wash.className='mini-wash';
+    const veil=document.createElement('div');veil.className='mini-veil';
+    const art=document.createElement('div');art.className='mini-art';
     const fallback=generatedCover(g);
     const image=document.createElement('img');image.loading='lazy';image.alt='';image.hidden=true;
     const src=blobUrls.get(key(g)) || artworks.get(key(g)) || matchCover(g) || g.img;
     if(src){
-      // In COEP-isolated pages remote covers require CORS; never let an image failure break the library.
       if(src.startsWith('https://'))image.crossOrigin='anonymous';
       image.src=src;image.hidden=false;
-      image.onerror=()=>{if(g.img && image.src!==g.img && image.src.startsWith('https://')){image.crossOrigin=null;image.src=g.img;return;}image.hidden=true;fallback.hidden=false;};fallback.hidden=true;
-    }
-    cover.append(fallback,image);
-    const platform=document.createElement('span');platform.className='gb3-platform';platform.textContent='3DS';cover.append(platform);
-    const caption=document.createElement('div');caption.className='gb3-card-label';
-    const title=document.createElement('div');title.className='gb3-card-title';title.title=g.title;title.textContent=g.title;
-    const bottom=document.createElement('div');bottom.className='gb3-card-bottom';
-    const format=document.createElement('span');format.textContent=g.ext;
-    const play=document.createElement('span');play.className='gb3-play';play.textContent='Gioca';play.insertAdjacentHTML('beforeend',icons.play);
-    bottom.append(format,play);caption.append(title,bottom);
-    const menu=document.createElement('button');menu.type='button';menu.className='gb3-action-menu';menu.setAttribute('aria-label','Opzioni per '+g.title);menu.setAttribute('aria-expanded',String(openActionKey===key(g)));menu.textContent='•••';
-    menu.addEventListener('click',ev=>{ev.stopPropagation();setActions(g,card,!card.classList.contains('is-open'));});
-    cover.addEventListener('click',ev=>{if(card.dataset.swipeBlocked==='1'){ev.preventDefault();return;}if(card.classList.contains('is-open')){ev.preventDefault();setActions(g,card,false);return;}launch(g);});
-    face.append(cover,caption,menu);card.append(actions,face);wireSwipe(card,g);
+      // Apply the same artwork as a blurred background layer, as in GamesPage.
+      wash.style.backgroundImage=`url("${src.replaceAll('"','%22')}")`;
+      image.onerror=()=>{
+        if(g.img && image.src!==g.img && image.src.startsWith('https://')){
+          image.crossOrigin=null;image.src=g.img;wash.style.removeProperty('background-image');return;
+        }
+        image.hidden=true;fallback.hidden=false;art.classList.add('mini-art--fallback');wash.style.removeProperty('background-image');
+      };
+      fallback.hidden=true;
+    } else art.classList.add('mini-art--fallback');
+    art.append(fallback,image);
+    const info=document.createElement('div');info.className='mini-info';
+    const title=document.createElement('span');title.className='mini-name';title.title=g.title;title.textContent=g.title;
+    info.append(title);face.append(fill,wash,veil,art,info);
+    face.addEventListener('click',ev=>{
+      if(card.dataset.swipeBlocked==='1'){ev.preventDefault();return;}
+      if(card.classList.contains('open')){setActions(g,card,false);return;}
+      launch(g);
+    });
+    face.addEventListener('keydown',ev=>{
+      if(ev.key==='Enter' || ev.key===' '){ev.preventDefault();if(card.classList.contains('open'))setActions(g,card,false);else launch(g);}
+    });
+    card.append(actions,face);wireSwipe(card,g);
     return card;
   }
   async function installArtwork(g,file) {
@@ -587,6 +622,7 @@
       if(root.contains(input)||input.type!=='file'||!input.files?.length)return;
       const rel=input.files[0].webkitRelativePath||'';
       if(rel.includes('/')) {
+        sessionFileList=input.files; // FileList stays available to the original player while this page is alive.
         folderName=rel.split('/')[0];chosen=true;
         void writeDB(PREF_STORE,'folder-name',folderName);scheduleRender();
         if (selectionPending) {selectionPending=false;scheduleAutomaticScan();}
