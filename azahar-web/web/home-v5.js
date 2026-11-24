@@ -155,7 +155,7 @@
     nameOverrides[key(g)]=next;
     await writeDB(PREF_STORE,'name-overrides',nameOverrides);
     for(const item of games){if(key(item)===key(g))item.title=next;}
-    displayedSnapshot=null;renderCards();setMessage('Nome del gioco aggiornato.','success');
+    displayedSnapshot=null;renderCards();gb3SaveSnapshotSoon();setMessage('Nome del gioco aggiornato.','success');
   }
   function editGame(g) {
     const dialog=root.querySelector('#gb3-edit-modal');
@@ -357,7 +357,7 @@
     scheduleRender();
   }
   function launch(g) {
-    if (!g.element?.isConnected) {setMessage('Libreria aggiornata. Premi Importa ROM e riprova.','error');return;}
+    if (!g.element?.isConnected) {setMessage('Per avviare questo gioco conferma la cartella salvata; la copertina rimane visibile senza permessi.');chooseFolder();return;}
     launchPending=true;
     root.hidden=true; // native player reuses in-page folder/file references when its own access is valid
     try {g.element.click();} catch(err){restoreHome();setMessage('Non riesco ad aprire il gioco: '+err.message,'error');return;}
@@ -468,12 +468,14 @@
   async function loadArtwork(g) {
     const k=key(g);if(artworks.has(k)||blobUrls.has(k))return;
     artworks.set(k,'');
-    const blob=await readDB(IMAGE_STORE,k);
+    let blob=await readDB(IMAGE_STORE,k); // user-selected artwork has priority
+    if(!(blob instanceof Blob))blob=await readDB(IMAGE_STORE,GB3_COVER_PREFIX+k);
     if(blob instanceof Blob) {
       const url=URL.createObjectURL(blob);blobUrls.set(k,url);artworks.set(k,url);
-      displayedSnapshot=null; renderCards();
+      displayedSnapshot=null;renderCards();
     }
   }
+
   function renderCards() {
     if(!root || root.hidden)return;
     const visibleGames=games.filter(g=>!hiddenGames.has(key(g)));
@@ -496,13 +498,20 @@
   }
   function refresh() {
     if(!root || launchPending)return;
-    const next=readGames();
-    const nextKey=next.map(g=>key(g)+'|'+g.title).join('\n');
-    const lastKey=games.map(g=>key(g)+'|'+g.title).join('\n');
-    if(nextKey!==lastKey){games=next;displayedSnapshot=null;}
-    if(games.length) chosen=true;
+    const native=readGames();
+    if(native.length){
+      const next=gb3MergeNativeGames(native);
+      const nextKey=next.map(g=>key(g)+'|'+g.title).join('\n');
+      const oldKey=games.map(g=>key(g)+'|'+g.title).join('\n');
+      if(nextKey!==oldKey||games.some(g=>!g.element?.isConnected)){
+        games=next;displayedSnapshot=null;gb3SaveSnapshotSoon();
+      }
+    }
+    // A missing FileList is not an empty game collection: retain last known metadata.
+    if(games.length)chosen=true;
     renderFolder();renderCards();
   }
+
   function scheduleRender() { clearTimeout(rebuildTimer);rebuildTimer=setTimeout(refresh,130); }
   function scheduleAutomaticScan() {
     clearTimeout(autoScanTimer);
@@ -647,15 +656,106 @@
     // before the hash bridge below wraps getCoverCatalog(). Defer this
     // call one microtask so the wrapper and Title ID index initialize.
     queueMicrotask(() => void getCoverCatalog());
+    void gb3RestoreSnapshot();
     refresh();setTimeout(refresh,700);setTimeout(refresh,2500);
   }
-  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',build,{once:true});else build();
+  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',build,{once:true});else queueMicrotask(build);
 
   // GB3_HASH_V533_BRIDGE -- stable integration via function wrappers, no fragile HTML anchors.
   const gb3ExactCovers = new Map();
   const gb3HashStatus = new Map();
   let gb3HashCatalog = null;
   let gb3HashReady = false;
+
+  // GB3_SNAPSHOT_V540 -- Persistent LIBRARY METADATA, not ROMs or permissions.
+  // Safari can show remembered games/covers even with no FileList after reload.
+  const GB3_LIBRARY_PREF='gb3-library-snapshot-v540';
+  const GB3_COVER_PREFIX='gb3-verified-cover:';
+  const gb3KnownGames=new Map();
+  const gb3CoverDownloads=new Set();
+  let gb3SnapshotTimer=0;
+  let gb3Restored=false;
+  function gb3SerializableGame(g){
+    const id=key(g),verified=gb3ExactCovers.get(id)||g.verifiedCover||'';
+    return {
+      title:String(g.title||'').slice(0,120),
+      nativeTitle:String(g.nativeTitle||'').slice(0,120),
+      fileName:String(g.fileName||'').slice(0,300),
+      path:String(g.path||g.fileName||'').slice(0,1000),
+      ext:String(g.ext||'3DS').slice(0,8),
+      verifiedCover:/^https:\/\/raw\.githubusercontent\.com\/libretro-thumbnails\//.test(verified)?verified:''
+    };
+  }
+  function gb3SaveSnapshotSoon(){
+    if(!gb3Restored || !games.length)return; // Never destroy the remembered library on a temporary 0-file scan.
+    clearTimeout(gb3SnapshotTimer);
+    gb3SnapshotTimer=setTimeout(async()=>{
+      const all=games.filter(g=>VALID_EXT.test(String(g.fileName||''))).map(g=>gb3SerializableGame(g));
+      if(!all.length)return;
+      for(const g of all) gb3KnownGames.set(key(g),g);
+      await writeDB(PREF_STORE,GB3_LIBRARY_PREF,{schema:1,folderName:folderName||'',games:all,savedAt:Date.now()});
+    },250);
+  }
+  async function gb3RestoreSnapshot(){
+    const saved=await readDB(PREF_STORE,GB3_LIBRARY_PREF);
+    gb3Restored=true;
+    if(!saved||saved.schema!==1||!Array.isArray(saved.games)){gb3SaveSnapshotSoon();return;}
+    const entries=saved.games.filter(x=>x&&typeof x.fileName==='string'&&VALID_EXT.test(x.fileName)).slice(0,2000);
+    for(const x of entries){
+      const g={title:String(x.title||x.fileName),nativeTitle:String(x.nativeTitle||x.title||''),
+        fileName:x.fileName,path:String(x.path||x.fileName),ext:String(x.ext||'3DS'),
+        verifiedCover:typeof x.verifiedCover==='string'?x.verifiedCover:'',img:'',element:null};
+      const k=key(g);gb3KnownGames.set(k,g);
+      if(g.verifiedCover)gb3ExactCovers.set(k,g.verifiedCover);
+    }
+    if(!folderName&&typeof saved.folderName==='string')folderName=saved.folderName;
+    const native=readGames();
+    if(!native.length&&!games.length){games=[...gb3KnownGames.values()];}
+    else if(native.length){games=native.map(g=>{
+      const old=gb3KnownGames.get(key(g));
+      return old?{...g,verifiedCover:old.verifiedCover||''}:g;
+    });}
+    if(games.length)chosen=true;
+    displayedSnapshot=null;renderFolder();renderCards();
+    gb3SaveSnapshotSoon();
+    console.info('[GAEMBOY 3DS] Restored library metadata from IndexedDB:',entries.length,'games; ROM files NOT copied.');
+  }
+  async function gb3CacheVerifiedCover(g,url){
+    const k=key(g);
+    if(!url||!/^https:\/\/raw\.githubusercontent\.com\/libretro-thumbnails\//.test(url)||gb3CoverDownloads.has(k))return;
+    gb3CoverDownloads.add(k);
+    try {
+      const previous=await readDB(PREF_STORE,GB3_COVER_PREFIX+k);
+      if(previous===url)return;
+      const response=await fetch(url,{mode:'cors',credentials:'omit'});
+      if(!response.ok)throw new Error('HTTP '+response.status);
+      const blob=await response.blob();
+      if(!blob.type.startsWith('image/')||blob.size>3*1024*1024)throw new Error('Invalid/large image');
+      await writeDB(IMAGE_STORE,GB3_COVER_PREFIX+k,blob);
+      await writeDB(PREF_STORE,GB3_COVER_PREFIX+k,url);
+      console.info('[GAEMBOY 3DS] Cached verified cover in browser:',g.fileName);
+    } catch(err) {
+      // If a CDN blocks CORS, the verified remote URL still persists in metadata.
+      console.info('[GAEMBOY 3DS] Cover URL saved; local image cache not available:',err?.message||err);
+    } finally {gb3CoverDownloads.delete(k);}
+  }
+  function gb3MergeNativeGames(next){
+    return next.map(g=>{
+      const saved=gb3KnownGames.get(key(g));
+      if(saved?.verifiedCover){
+        if(!gb3ExactCovers.has(key(g)))gb3ExactCovers.set(key(g),saved.verifiedCover);
+        return {...g,verifiedCover:saved.verifiedCover};
+      }
+      return g;
+    });
+  }
+  // Debug only exposes file names/cover URLs; no ROM data.
+  window.Gaemboy3DSLibraryCache={status:()=>({
+    visibleGames:games.length,cachedMetadata:gb3KnownGames.size,
+    verifiedCovers:gb3ExactCovers.size,folderPermissionAvailable:Boolean(lastHandle),
+    note:'Le copertine e i titoli sono persistenti; i permessi per leggere/avviare le ROM sono separati.'
+  })};
+
 
   // GB3_SESSION_V537 -- keep native directory selection files alive on Safari.
   // Copies only File object references, not the underlying ROM data. A browser
@@ -885,7 +985,12 @@
       const hit=engine.findEntry(gb3HashCatalog,identity);
       const cover=hit&&engine.matchCover(hit.entry,coverNames,navigator.language||'it');
       if(cover&&gb3ExactCovers.get(k)!==cover){
-        gb3ExactCovers.set(k,cover);displayedSnapshot=null;renderCards();
+        gb3ExactCovers.set(k,cover);
+        g.verifiedCover=cover;
+        gb3KnownGames.set(k,gb3SerializableGame(g));
+        gb3SaveSnapshotSoon();
+        void gb3CacheVerifiedCover(g,cover);
+        displayedSnapshot=null;renderCards();
       }
       if(hit){
         console.info('[GAEMBOY 3DS] Cover match ('+hit.method+') for '+g.fileName+': '+hit.entry.name+' - '+(cover?'found':'Libretro artwork unavailable'));
@@ -903,7 +1008,7 @@
   function gb3IdentifyVisibleGames() {
     if (!gb3HashReady || !coverOnline || !root || root.hidden) return;
     for (const game of games) {
-      if (!hiddenGames.has(key(game))) void gb3IdentifyCover(game);
+      if (!hiddenGames.has(key(game)) && (game.element?.isConnected || lastHandle || gb3PickedCandidateFiles().length)) void gb3IdentifyCover(game);
     }
   }
 

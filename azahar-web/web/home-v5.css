@@ -384,3 +384,128 @@
 @media(max-width:720px) {#gb3-home .gb3-grid {grid-template-columns:repeat(2,minmax(0,1fr));}#gb3-home .mini-card-content {min-height:158px;}}
 @media(hover:none) {#gb3-home .mini-card:hover {transform:none;}}
 @media(prefers-reduced-motion:reduce){#gb3-home .mini-card-content{transition:none;}}
+
+/* GAEMBOY 3DS Home v5.4 — visual alignment with the real GamesPage cards.
+   Only applies to #gb3-home; game player and Azahar remain untouched. */
+#gb3-home .gb3-grid {
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(210px,250px));
+  justify-content:start;
+  gap:22px;
+}
+#gb3-home .mini-card {
+  width:100%;
+  aspect-ratio:1 / 1;
+  min-height:210px;
+  background:var(--brand-deep,#230020);
+  border:1px solid rgba(214,23,80,.35);
+  border-radius:24px;
+}
+#gb3-home .mini-card .mini-card-content,
+#gb3-home .mini-card:not(.mini-card--solo) .mini-card-content {
+  display:flex;
+  flex-direction:column;
+  justify-content:flex-end;
+  align-items:center;
+  gap:8px;
+  width:100%;
+  height:100%;
+  min-height:0;
+  padding:18px 15px 17px;
+  overflow:hidden;
+  border-radius:23px;
+  background:var(--brand-deep,#230020);
+}
+#gb3-home .mini-card .mini-card-content .mini-art,
+#gb3-home .mini-card:not(.mini-card--solo) .mini-card-content .mini-art {
+  order:1;
+  position:relative;
+  z-index:2;
+  flex:1 1 auto;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  width:100%;
+  height:auto;
+  min-height:0;
+  max-height:none;
+  margin:0;
+  overflow:visible;
+  border-radius:0;
+  background:transparent;
+  box-shadow:none;
+}
+#gb3-home .mini-card .mini-card-content .mini-art img,
+#gb3-home .mini-card:not(.mini-card--solo) .mini-card-content .mini-art img {
+  display:block;
+  width:auto;
+  height:100%;
+  max-width:95%;
+  max-height:175px;
+  object-fit:contain;
+  filter:drop-shadow(0 9px 8px rgba(0,0,0,.48));
+}
+#gb3-home .mini-card .mini-card-content .mini-info,
+#gb3-home .mini-card:not(.mini-card--solo) .mini-card-content .mini-info {
+  order:2;
+  position:relative;
+  z-index:2;
+  display:flex;
+  flex:0 0 auto;
+  justify-content:flex-end;
+  align-items:center;
+  width:100%;
+  max-height:55px;
+  margin:0;
+  text-align:center;
+}
+#gb3-home .mini-card .mini-card-content .mini-name,
+#gb3-home .mini-card:not(.mini-card--solo) .mini-card-content .mini-name {
+  font-size:clamp(14px,1.5vw,18px);
+  font-weight:750;
+  line-height:1.24;
+  color:#fff;
+  text-align:center;
+  text-shadow:0 2px 6px rgba(0,0,0,.55);
+}
+#gb3-home .mini-card:not(.mini-card--solo) .mini-fill,
+#gb3-home .mini-card .mini-fill {
+  inset:0;
+  height:auto;
+  background:linear-gradient(180deg,#230020 0%,rgba(126,42,99,.32) 53%,rgba(214,23,80,.20) 100%);
+}
+#gb3-home .mini-card:not(.mini-card--solo) .mini-wash,
+#gb3-home .mini-card .mini-wash {
+  inset:0;
+  height:100%;
+  transform:scale(1.12);
+  background-position:center;
+  background-size:cover;
+  filter:grayscale(.4) blur(1px);
+  opacity:.34;
+  -webkit-mask-image:linear-gradient(180deg,transparent 0%,#000 38%,#000 100%);
+  mask-image:linear-gradient(180deg,transparent 0%,#000 38%,#000 100%);
+}
+#gb3-home .mini-card:not(.mini-card--solo) .mini-veil,
+#gb3-home .mini-card .mini-veil {
+  inset:0;
+  height:100%;
+  background:linear-gradient(180deg,rgba(35,0,32,.11) 0%,transparent 45%,rgba(35,0,32,.60) 75%,rgba(35,0,32,.93) 100%);
+}
+#gb3-home .mini-card .mini-card-content .mini-art--fallback .gb3-fake {
+  display:flex;
+  width:clamp(100px,12vw,155px);
+  height:auto;
+  aspect-ratio:1;
+  max-width:85%;max-height:155px;
+}
+#gb3-home .mini-card .mini-card-actions {justify-content:flex-end;}
+#gb3-home .mini-card .mini-card-content {will-change:transform;}
+@media(max-width:720px){
+  #gb3-home .gb3-grid {grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;}
+  #gb3-home .mini-card {min-height:0;aspect-ratio:1/1;}
+  #gb3-home .mini-card .mini-card-content,
+  #gb3-home .mini-card:not(.mini-card--solo) .mini-card-content {padding:12px 9px 12px;gap:6px;}
+  #gb3-home .mini-card .mini-card-content .mini-art img {max-height:115px;}
+  #gb3-home .mini-card .mini-card-content .mini-name {font-size:clamp(12px,3.7vw,16px);}
+}
