@@ -1,0 +1,143 @@
+/* Gaemboy 3DS · game UX 11. Override only the playing view and menu. */
+:root {
+  --g3-rose: #e01961;
+  --g3-pink: #f18caf;
+  --g3-ink: #27061d;
+  --g3-panel: #390c2d;
+  --g3-border: #7d1d4e;
+  --g3-label: #ddb8ce;
+}
+body[data-gb3-palette="violet"] { --g3-rose:#a04feb; --g3-pink:#ce9bff; --g3-ink:#180a35; --g3-panel:#24123d; --g3-border:#63408e; }
+body[data-gb3-palette="midnight"] { --g3-rose:#547bea; --g3-pink:#a8c4ff; --g3-ink:#0c152e; --g3-panel:#152541; --g3-border:#38527b; }
+body.playing {
+  background: radial-gradient(ellipse at 50% 30%, #3a102e 0%, #1b0818 58%, #100a14 100%);
+  color:#fff;
+  padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+}
+body.playing main { max-width: none; height:100%; }
+body.playing #game-view { width:100%; max-width:1100px; margin-inline:auto; gap:10px; }
+#game-view .game-header {
+  position: relative; z-index:2; width:min(100%, 1020px); margin:0 auto;
+  min-height:54px; padding:4px 13px; border:1px solid rgba(241,140,175,.16);
+  border-radius:16px; background:rgba(35,4,27,.72);
+  backdrop-filter:blur(8px);
+}
+.gb3-game-identity { display:flex; gap:12px; align-items:center; flex:1; min-width:0; text-align:left; }
+.gb3-platform-label { flex:none; padding:5px 9px; color:var(--g3-pink); border:1px solid var(--g3-border);
+  border-radius:9px; font-weight:800; font-size:.7rem; letter-spacing:.1em; background:rgba(224,25,97,.13); }
+.gb3-game-names { display:flex; flex-direction:column; min-width:0; gap:2px; }
+#game-view .game-header h1 { font-size: clamp(.85rem, 1.4vw, 1rem); line-height:1.25; font-weight:700; color:#fff; }
+.gb3-input-hint { font-size:.7rem; line-height:1.2; color:var(--g3-label); }
+#game-view .game-header .gb3-menu-button { margin:0; display:flex; align-items:center; gap:8px; min-height:38px;
+  border:1px solid rgba(241,140,175,.38); border-radius:11px; padding:7px 16px; background:var(--g3-panel); color:#fff; font-weight:700; }
+#game-view .game-header .gb3-menu-button:hover { background:var(--g3-border); }
+.gb3-game-help { margin:0; padding:1px 0 4px; font-size:.7rem; text-align:center; color:var(--g3-label); }
+.gb3-console {
+  position:relative; flex:1 1 0; min-height:0; width:min(100%, 990px); margin:auto; padding:5px 14px 7px;
+  display:flex; flex-direction:column;
+  border-radius:35px 35px 42px 42px;
+  border:2px solid #7c254e;
+  background:linear-gradient(133deg, #6b1740 0%, #3a0d2e 13%, #22071c 55%, #370c2b 82%, #5e1740 100%);
+  box-shadow:inset 0 2px 2px rgba(255,255,255,.22), inset 0 -9px 16px rgba(0,0,0,.45), 0 12px 42px rgba(0,0,0,.35);
+}
+.gb3-lid { flex:none; height:33px; display:flex; align-items:center; justify-content:space-between; padding:0 20px;
+  border-bottom:1px solid rgba(241,140,175,.17); color:var(--g3-pink); }
+.gb3-lid-brand { font-weight:800; font-size:.73rem; letter-spacing:.18em; opacity:.9; }
+.gb3-lid-brand b { font-size:.65rem; color:#fff; }
+.gb3-lid-camera { width:9px; height:9px; border-radius:50%; margin-right:50%; border:2px solid #a4537f;
+  background:#16111f; box-shadow:0 0 0 3px rgba(255,255,255,.05); }
+.gb3-lid-speaker { width:48px; height:12px; background:repeating-linear-gradient(90deg, #8e3762 0 2px, transparent 2px 5px); opacity:.65; }
+.gb3-console-base { flex:1 1 0; min-height:0; position:relative; display:flex; justify-content:center; align-items:center;
+  border-radius:18px; background:radial-gradient(circle at 50% 52%, #5a193b 0%, #300c28 65%, #260b21 100%); }
+body.gb3-game-skin #game-view .stage {
+  flex:none; position:relative; width:min(420px, 45%, calc((100dvh - 188px) * 5 / 6));
+  height:auto; aspect-ratio:5 / 6; padding:10px; min-height:0;
+  border:1px solid #965173; border-radius:17px; background:linear-gradient(145deg,#130a14,#080609);
+  box-shadow: 0 0 0 5px rgba(14,4,16,.38), 0 7px 28px rgba(0,0,0,.65), inset 0 0 12px #000;
+  container-type:normal;
+}
+body.gb3-game-skin #screen { width:100%; height:100%; max-width:100%; aspect-ratio:5/6; object-fit:fill;
+  border-radius:7px; background:#000; }
+body.gb3-game-skin #game-status { inset:10px; }
+.gb3-console-bottom { flex:none; height:26px; display:flex; align-items:center; justify-content:space-between; padding:0 27px;
+  font-size:.63rem; font-weight:800; letter-spacing:.16em; color:#a66789; }
+.gb3-led { width:7px; height:7px; border-radius:50%; background:#6fd4aa; box-shadow:0 0 8px rgba(111,212,170,.45); }
+/* In the desktop skin keep the exact existing DOM buttons as clickable hardware controls. */
+body.gb3-game-skin #touch-controls { --k: clamp(28px, 3.3vw, 43px); position:absolute; inset:0;
+  display:block; padding:0; width:100%; height:100%; border:0; margin:0; pointer-events:none; }
+body.gb3-game-skin #touch-controls button, body.gb3-game-skin #touch-controls .stick { pointer-events:auto; }
+body.gb3-game-skin #touch-controls button { background:linear-gradient(145deg,#6c3154,#301226); color:#fff;
+  border:1px solid #99627f; box-shadow:0 3px 5px rgba(0,0,0,.3), inset 0 1px rgba(255,255,255,.15); }
+body.gb3-game-skin #touch-controls button.pressed { background:var(--g3-rose); }
+body.gb3-game-skin .shoulders, body.gb3-game-skin .control-deck { display:contents; }
+body.gb3-game-skin .shoulders button { position:absolute; top:4%; width:12%; height:37px !important; border-radius:14px 14px 8px 8px; }
+body.gb3-game-skin .shoulders [data-button="10"] { left:3%; }
+body.gb3-game-skin .shoulders [data-button="12"] { left:18%; }
+body.gb3-game-skin .shoulders [data-button="13"] { right:18%; }
+body.gb3-game-skin .shoulders [data-button="11"] { right:3%; }
+body.gb3-game-skin .control-deck > [data-stick="left"] { position:absolute; left:7%; top:30%; }
+body.gb3-game-skin .control-deck > [data-stick="right"] { position:absolute; right:7%; top:54%; }
+body.gb3-game-skin .control-deck > .dpad { position:absolute; left:5%; top:56%; }
+body.gb3-game-skin .control-deck > .face-buttons { position:absolute; right:4%; top:28%; }
+body.gb3-game-skin .control-deck > .system-buttons { position:absolute; left:calc(50% - 45px); bottom:2%; display:flex;
+  width:90px; align-items:center; gap:5px; }
+body.gb3-game-skin .control-deck > .system-buttons button { height:26px !important; font-size:.64rem !important; }
+body.gb3-game-skin .stick { background:radial-gradient(circle at 35% 30%, #66234d, #1b0818);
+  border-color:#a0597c; width:calc(var(--k) * 1.9); height:calc(var(--k) * 1.9); }
+body.gb3-game-skin .stick-knob { background:linear-gradient(145deg,#d7abc2,#87627b); }
+body.gb3-game-skin .face-buttons button { background:linear-gradient(145deg,#f32a7a,#9d1246) !important; border-color:#ff77ad; }
+body.gb3-game-skin .face-buttons button.pressed { background:#ff81bb !important; }
+body.gb3-game-skin .dpad button { border-radius:8px; }
+body.gb3-game-controls-hidden #touch-controls { visibility:hidden; }
+/* No external skin on small/mobile touch devices, just gameplay + the original touch controls. */
+body.gb3-game-no-skin .gb3-console { border:0; border-radius:0; padding:0; box-shadow:none; background:transparent; width:100%; }
+body.gb3-game-no-skin .gb3-lid, body.gb3-game-no-skin .gb3-console-bottom { display:none; }
+body.gb3-game-no-skin .gb3-console-base { flex-direction:column; background:transparent; border-radius:0; gap:8px; }
+body.gb3-game-no-skin #game-view .stage { width:100%; flex:1 1 0; height:auto; min-height:0; container-type:size; border:0; background:transparent; box-shadow:none; padding:0; }
+body.gb3-game-no-skin #screen { width:min(100cqw, calc(100cqh * 5 / 6)); height:auto; aspect-ratio:5/6; border-radius:6px; }
+body.gb3-game-no-skin #touch-controls { width:100%; display:grid; position:static; flex:none; --k:clamp(33px, 10.4vw, 51px); padding-bottom:4px; }
+body.gb3-game-no-skin .shoulders { display:grid; }
+body.gb3-game-no-skin .control-deck { display:grid; }
+body.gb3-game-no-skin .gb3-game-help { display:none; }
+body.gb3-game-no-skin #touch-controls button { background:#34253a; border:1px solid #563958; color:#fff; }
+body.gb3-game-no-skin #touch-controls .pressed { background:var(--g3-rose); }
+body.gb3-game-no-skin .face-buttons button { background:var(--g3-rose) !important; }
+body.gb3-game-no-skin .face-buttons button.pressed { background:var(--g3-pink) !important; }
+/* Styling the existing menu, not replacing its events or state. */
+#game-menu { background:#210a20; border:1px solid #844366; color:#fff; border-radius:20px; box-shadow:0 18px 60px rgba(0,0,0,.6); }
+#game-menu::backdrop { background:rgba(11,0,14,.78); backdrop-filter:blur(3px); }
+#game-menu .game-header { position:sticky; top:-16px; z-index:2; margin:-16px -16px 14px; padding:13px 16px;
+  background:#2e0c29; border-bottom:1px solid #76305b; border-radius:20px 20px 0 0; }
+#game-menu .game-header h2 { color:#fff; font-size:1.13rem; }
+#game-menu button:not(:disabled) { border-radius:10px; background:var(--g3-rose); color:#fff; }
+#game-menu button.alt:not(:disabled) { background:#53213e; }
+#game-menu details { border:1px solid #693451; background:#30122c; border-radius:12px; }
+#game-menu input, #game-menu select, #game-menu textarea { background:#160d1a; border-color:#8a4267; color:#fff; border-radius:8px; }
+#game-menu #rom-info { color:#ddb8ce; }
+#game-menu a { color:var(--g3-pink); }
+#game-view button:focus-visible, #game-menu button:focus-visible, #game-view #screen:focus-visible { outline:2px solid var(--g3-pink); outline-offset:3px; }
+@media (max-width:840px), (hover:none) and (pointer:coarse) {
+  body.playing { background:#170c1c; padding: max(5px, env(safe-area-inset-top)) max(5px, env(safe-area-inset-right)) max(5px, env(safe-area-inset-bottom)) max(5px, env(safe-area-inset-left)); }
+  body.playing #game-view { gap:5px; }
+  #game-view .game-header { min-height:40px; padding:3px 5px; border:0; border-radius:0; background:transparent; }
+  .gb3-input-hint { display:none; }
+  #game-view .game-header .gb3-menu-button { min-height:37px; }
+  .gb3-game-help { display:none; }
+  body.gb3-game-no-skin #touch-controls { --k:clamp(33px, 10.2vw, 50px); }
+  body.gb3-game-no-skin .control-deck { gap:5px; }
+}
+@media (orientation:landscape) and (max-height:520px) {
+  body.gb3-game-no-skin #game-view { display:flex; flex-direction:column; grid-template-columns:none; grid-template-rows:none; }
+  body.gb3-game-no-skin #game-view .game-header { grid-column:auto; }
+  body.gb3-game-no-skin .gb3-console-base { display:grid; grid-template-columns:minmax(0,1fr) minmax(0,52%); grid-template-rows:minmax(0,1fr); gap:8px; }
+  body.gb3-game-no-skin #game-view .stage { grid-column:1; grid-row:1; height:100%; width:100%; }
+  body.gb3-game-no-skin #touch-controls { grid-column:2; grid-row:1; align-self:center; --k:clamp(29px,8vh,43px); }
+}
+@media (max-height:730px) and (min-width:841px) and (hover:hover) and (pointer:fine) {
+  .gb3-lid { height:23px; }
+  .gb3-console-bottom { height:17px; }
+  body.gb3-game-skin .shoulders button { top:1%; height:29px !important; }
+  body.gb3-game-skin #touch-controls { --k:clamp(26px,3vw,37px); }
+  .gb3-game-help { display:none; }
+}
+@media (prefers-reduced-motion:reduce) { #game-view *, #game-menu * { transition:none !important; animation:none !important; } }

@@ -1,2 +1,3 @@
-Gaemboy 3DS Home v5 - embed-fix10
-Header removed; favicon and configurable add-game button; credits at bottom.
+Gaemboy 3DS - gameplay UX 11
+Desktop: skin Gaemboy, touch controls within console; mobile: no skin.
+Source: feature/gaemboy-3ds-home-v2.

@@ -14,7 +14,8 @@
 <link rel="stylesheet" href="./gaemboy3ds-ui.css?v=10">
   <link rel="stylesheet" href="home-v5.css?v=10">
   <link rel="stylesheet" href="home-v5-5.css?v=10">
-<meta name="gaemboy-build" content="embed-fix10">
+<link rel="stylesheet" href="./gaemboy3ds-game.css?v=11">
+<meta name="gaemboy-build" content="game-ux11">
 </head>
 <body>
 <main>
@@ -43,14 +44,17 @@
 </section>
 <section id="game-view" aria-label="Gioco" hidden>
   <header class="game-header">
-    <h1 id="game-title">Gioco</h1>
-    <button id="open-menu" type="button" class="alt" aria-haspopup="dialog" aria-controls="game-menu">Menu</button>
+    <div class="gb3-game-identity"><span class="gb3-platform-label">3DS</span><div class="gb3-game-names"><h1 id="game-title">Gioco</h1><span class="gb3-input-hint">Tastiera e controller supportati</span></div></div>
+    <button id="open-menu" type="button" class="alt gb3-menu-button" aria-haspopup="dialog" aria-controls="game-menu" aria-label="Apri menu di gioco"><span aria-hidden="true">☰</span> Menu</button>
   </header>
-  <div class="stage">
-    <canvas id="screen" width="400" height="480" tabindex="-1" aria-label="Schermo superiore e inferiore del Nintendo 3DS"></canvas>
-    <p id="game-status" role="status">Caricamento…</p>
-  </div>
-  <fieldset id="touch-controls" disabled aria-label="Comandi touch">
+  <div class="gb3-console" id="gb3-console" aria-label="Console 3DS">
+    <div class="gb3-lid" aria-hidden="true"><span class="gb3-lid-brand">GAEMBOY <b>3DS</b></span><span class="gb3-lid-camera"></span><span class="gb3-lid-speaker"></span></div>
+    <div class="gb3-console-base">
+      <div class="stage">
+        <canvas id="screen" width="400" height="480" tabindex="-1" aria-label="Schermo superiore e inferiore del Nintendo 3DS"></canvas>
+        <p id="game-status" role="status">Caricamento…</p>
+      </div>
+<fieldset id="touch-controls" disabled aria-label="Comandi touch">
     <legend class="sr-only">Comandi touch</legend>
     <div class="shoulders">
       <button type="button" data-button="10">L</button>
@@ -79,6 +83,10 @@
       </div>
     </div>
   </fieldset>
+    </div>
+    <div class="gb3-console-bottom" aria-hidden="true"><span>GAEMBOY · 3DS</span><span class="gb3-led"></span></div>
+  </div>
+  <p class="gb3-game-help">Usa la tastiera o il controller. Per le impostazioni apri <strong>Menu</strong>.</p>
 </section>
 <div id="notice" role="status" hidden></div>
 </main>
@@ -186,6 +194,7 @@
     sessionStorage.removeItem('coi-reload');
   }
 </script>
+<script defer src="./gaemboy3ds-game.js?v=11"></script>
 <script type="module" src="./gaemboy3ds-page.js?v=10"></script>
   <script defer src="home-v5-hash.js?v=10"></script>
 <script defer src="home-v5.js?v=10"></script>
