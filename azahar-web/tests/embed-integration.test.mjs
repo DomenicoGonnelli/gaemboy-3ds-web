@@ -38,6 +38,6 @@ test('credits remain in home by default, host relocation only when visible', () 
 
 test('branding removed from home, logo used as browser favicon', () => {
   assert.doesNotMatch(home, /<header class="gb3-header">/);
-  assert.match(html, /rel="icon"[^>]*home-v5-assets\/logo\.png\?v=09/);
+  assert.match(html, /rel="icon"[^>]*home-v5-assets\/logo\.png\?v=10/);
   assert.match(html, /rel="apple-touch-icon"/);
 });

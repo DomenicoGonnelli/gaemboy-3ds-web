@@ -1,0 +1,2 @@
+Gaemboy 3DS Home v5 - embed-fix10
+Header removed; favicon and configurable add-game button; credits at bottom.
