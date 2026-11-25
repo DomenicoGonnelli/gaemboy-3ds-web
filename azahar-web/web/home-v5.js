@@ -9,6 +9,22 @@
 
   const PREFIX = 'gb3';
   const SOURCE = 'https://github.com/DomenicoGonnelli/gaemboy-3ds-web';
+  // Host integration: only visual controls and attribution placement are configurable.
+  // Premium entitlements and ROM permissions are deliberately not configurable here.
+  const embedOptions = (() => {
+    const input = (window.Gaemboy3DSHomeOptions && typeof window.Gaemboy3DSHomeOptions === 'object')
+      ? window.Gaemboy3DSHomeOptions : {};
+    const embedded = new URLSearchParams(location.search).get('embed') === '1';
+    const addGameButton = input.addGameButton === 'external' || (embedded && input.addGameButton !== 'internal')
+      ? 'external' : 'internal';
+    return Object.freeze({
+      addGameButton,
+      addGameText: typeof input.addGameText === 'string' && input.addGameText.trim()
+        ? input.addGameText.trim().slice(0, 60) : '+ Aggiungi gioco',
+      creditsPlacement: input.creditsPlacement === 'host' ? 'host' : 'bottom',
+      creditsTarget: typeof input.creditsTarget === 'string' ? input.creditsTarget : ''
+    });
+  })();
   // Keep previous DB so local custom covers and last directory survive the upgrade.
   const DB = 'gaemboy-3ds-home-ui-v3';
   const IMAGE_STORE = 'artwork';
@@ -428,7 +444,7 @@
         for(const option of quotaControl.options) option.disabled=Number(option.value)>state.maxGb;
       }
     }
-    root.querySelector('#gb3-select').textContent='+ Aggiungi gioco';
+    root.querySelector('#gb3-select').textContent=embedOptions.addGameText;
     root.querySelector('#gb3-scan').hidden=true;
   }
   function getDecorativeTitle(title) {
@@ -632,14 +648,14 @@
   }
   function build() {
     root=document.createElement('main');root.id='gb3-home';root.setAttribute('aria-label','Libreria Gaemboy 3DS');
+    root.dataset.addGameButton=embedOptions.addGameButton;
     root.innerHTML=`
       <div class="gb3-wallpaper" aria-hidden="true"></div>
       <div class="gb3-shell">
-        <header class="gb3-header"><div class="gb3-brand"><img src="home-v5-assets/logo.png" alt="" width="48" height="48"><div class="gb3-brand-name"><strong>GAEMBOY</strong><span>3DS LIBRARY</span></div></div><span class="gb3-header-note">La tua console, i tuoi giochi</span></header>
         <div class="gb3-scroller" id="gb3-scroller">
         <section class="gb3-config" aria-label="Gestione libreria">
           <div class="gb3-config-copy"><div class="gb3-config-icon">${icons.folder}</div><div><div class="gb3-eyebrow">LIBRERIA LOCALE</div><strong id="gb3-folder-name">Nessun gioco importato</strong><div class="gb3-cache-summary"><span id="gb3-folder-sub">Cache locale: 0 MB / 3.00 GB</span><button id="gb3-cache-info" type="button" class="gb3-info-link" aria-haspopup="dialog" aria-controls="gb3-cache-modal">Maggiori info</button></div><p id="gb3-cache-progress" class="gb3-cache-progress" role="status" hidden></p><p id="gb3-cache-alert" class="gb3-cache-alert" role="status" hidden></p></div></div>
-          <div class="gb3-config-buttons"><label id="gb3-cache-settings" class="gb3-cache-settings" hidden>Cache Premium <select id="gb3-cache-tier" aria-label="Spazio cache Premium"><option value="3">3 GB</option><option value="5">5 GB</option><option value="8">8 GB</option></select></label><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-main">+ Aggiungi gioco</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-soft" hidden>${icons.refresh} Aggiorna libreria</button></div>
+          <div class="gb3-config-buttons"><label id="gb3-cache-settings" class="gb3-cache-settings" hidden>Cache Premium <select id="gb3-cache-tier" aria-label="Spazio cache Premium"><option value="3">3 GB</option><option value="5">5 GB</option><option value="8">8 GB</option></select></label><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-main">${embedOptions.addGameText.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-soft" hidden>${icons.refresh} Aggiorna libreria</button></div>
         </section>
         <div id="gb3-status" class="gb3-status" role="status" aria-live="polite" hidden></div>
         <section class="gb3-content" aria-label="Giochi Nintendo 3DS">
@@ -684,6 +700,32 @@
       </div>
     `;
     document.body.append(root);
+    // A host can render credits at its own page footer. If it forgets the target,
+    // falls back to the local footer: attribution cannot be disabled by config.
+    const credits = root.querySelector('.gb3-footer');
+    if (embedOptions.creditsPlacement === 'host' && embedOptions.creditsTarget) {
+      let target = null;
+      try { target = document.querySelector(embedOptions.creditsTarget); } catch (_) { /* invalid selector */ }
+      if (target && !root.contains(target) && target.getClientRects().length > 0 &&
+          getComputedStyle(target).visibility !== 'hidden') {
+        // Don't move attribution behind the fixed 3DS overlay or off screen.
+        const rect = target.getBoundingClientRect();
+        const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+        const topElement = cx >= 0 && cy >= 0 && cx < innerWidth && cy < innerHeight
+          ? document.elementFromPoint(cx, cy) : null;
+        if (topElement && (topElement === target || target.contains(topElement))) {
+          target.append(credits);
+          credits.classList.add('gb3-footer-host');
+        }
+      }
+    }
+    // For same-document integration, call this method synchronously from the
+    // host button's click listener, retaining the browser's user activation.
+    window.Gaemboy3DSHome = Object.freeze({
+      addGame: () => {openSingleGame();},
+      getOptions: () => ({...embedOptions}),
+      credits: () => credits
+    });
     const cacheModal = root.querySelector('#gb3-cache-modal');
     const cacheInfo = root.querySelector('#gb3-cache-info');
     const closeCacheInfo = () => { cacheModal.hidden=true; cacheInfo.focus(); };

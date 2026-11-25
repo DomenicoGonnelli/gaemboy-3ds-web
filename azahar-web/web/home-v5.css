@@ -544,3 +544,22 @@
 #gb3-home .gb3-rom-import-meter {display:block;width:min(100%,240px);height:7px;accent-color:#f067a1;margin-top:5px;border-radius:10px;}
 #gb3-home .gb3-rom-import-pct {color:#f8c5d8;font-size:10px;font-variant-numeric:tabular-nums;}
 #gb3-home .mini-card .gb3-rom-import-meter {width:100%;max-width:150px;}
+
+/* Fix09: independent app view has no duplicate site branding. Browser tab uses favicon. */
+#gb3-home .gb3-scroller {display:flex;flex-direction:column;}
+#gb3-home .gb3-config {flex:0 0 auto;}
+#gb3-home .gb3-content {flex:0 0 auto;}
+#gb3-home .gb3-footer {flex:0 0 auto;margin-top:auto!important;padding:16px 0 5px;
+  font-size:10px;line-height:1.4;color:rgba(255,255,255,.37);gap:8px 20px;}
+#gb3-home .gb3-footer a {color:rgba(238,156,190,.69);}
+#gb3-home[data-add-game-button="external"] #gb3-select,
+#gb3-home[data-add-game-button="external"] #gb3-select-empty,
+#gb3-home[data-add-game-button="external"] #gb3-single {display:none!important;}
+#gb3-home[data-add-game-button="external"] .gb3-empty-cta:empty {display:none!important;}
+/* Host credits may sit outside #gb3-home and still retain unobtrusive styling. */
+.gb3-footer.gb3-footer-host {display:flex;justify-content:space-between;flex-wrap:wrap;
+  gap:8px 20px;margin-top:auto;padding:12px 0 6px;
+  border-top:1px solid rgba(255,255,255,.1);font-size:10px;line-height:1.4;
+  color:rgba(255,255,255,.56);}
+.gb3-footer.gb3-footer-host a {color:#de9fbb;}
+@media(max-width:650px){#gb3-home .gb3-footer{justify-content:center;text-align:center;}}

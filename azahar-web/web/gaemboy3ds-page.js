@@ -893,6 +893,8 @@ window.Gaemboy3DSCacheLibrary = {
   chooseCacheGb: choosePremiumCacheGb,
   status: () => ({ ...libState, games: libGames.size, copying: cacheBusy }),
   add: () => $('pick').click(),
+  // Files chosen by the Gaemboy host (e.g. iframe integration): import, don't boot.
+  importRomFiles: files => importFiles(files),
   launch: async path => {
     const game = [...libGames.values()].find(g => gamePath(g) === path);
     return game ? launchLibraryGame(game.key) : 'missing-game';
@@ -912,6 +914,19 @@ window.Gaemboy3DSCacheLibrary = {
   },
   refresh: updateCacheFlags,
 };
+// Cross-origin embed: the Gaemboy host must open the file picker itself from a
+// user gesture, then send the selected File objects with postMessage. Triggering
+// a remote picker via postMessage can be blocked by browser user-activation rules.
+// Ignore all other origins and non-File payloads; never accept remote URLs.
+const allowedGaemboyHosts = new Set([location.origin, 'https://gaemboy.com', 'https://www.gaemboy.com']);
+addEventListener('message', event => {
+  if (event.source !== window.parent || !allowedGaemboyHosts.has(event.origin)) return;
+  const data = event.data;
+  if (!data || data.type !== 'gaemboy3ds:import-rom-files' || !Array.isArray(data.files)) return;
+  if (data.files.length < 1 || data.files.length > 30 ||
+      !data.files.every(file => typeof File !== 'undefined' && file instanceof File)) return;
+  void importFiles(data.files);
+});
 void restoreCacheCatalog();
 
 // ---------------------------------------------------------------- UI
