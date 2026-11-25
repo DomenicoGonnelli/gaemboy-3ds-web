@@ -20,9 +20,15 @@ fi
 SRC_COMMIT="$(git rev-parse HEAD)"
 SRC_URL="$(git remote get-url "$REMOTE" | sed -e 's#\.git$##' -e 's#^git@github.com:#https://github.com/#')"
 
+# Prevent publishing the legacy picker page or a build without home assets.
+for needed in index.html home-v5.js home-v5-5.js home-v5.css home-v5-5.css gaemboy3ds-cache.js gaemboy3ds-page.js gaemboy3ds-worker.js home-v5-assets/logo.png home-v5-assets/loginBG.png home-v5-covers.json; do
+  [ -s "$DIST/$needed" ] || { echo "Missing mandatory Gaemboy v5 asset: $needed" >&2; exit 1; }
+done
+grep -q 'home-v5.js' "$DIST/index.html" || { echo "Refusing to publish legacy index.html" >&2; exit 1; }
+
 STAGE="$(mktemp -d)"
 trap 'rm -rf "$STAGE"' EXIT
-cp "$DIST"/* "$STAGE"/
+cp -R "$DIST"/. "$STAGE"/
 touch "$STAGE/.nojekyll"
 mkdir -p "$STAGE/homebrew"
 if [ -f "$HOMEBREW/craftus_reloaded.3dsx" ]; then

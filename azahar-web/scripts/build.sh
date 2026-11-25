@@ -43,5 +43,5 @@ make -C "$BUILD" -j"$(sysctl -n hw.ncpu)" gaemboy3ds
 
 mkdir -p "$DIST"
 cp "$BUILD"/bin/Release/gaemboy3ds.js "$BUILD"/bin/Release/gaemboy3ds.wasm "$DIST"/
-cp "$HERE"/web/* "$DIST"/
+cp -R "$HERE"/web/. "$DIST"/
 ls -la "$DIST"
