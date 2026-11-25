@@ -10,8 +10,8 @@ const OFF = {
 };
 import {
   validRom, registerRom, romFingerprint, listCatalog, putCatalogGame, deleteCatalogGame,
-  cachedFile, cacheUsage, cacheRom, removeCachedRom, ROM_LIMIT,
-} from './gaemboy3ds-cache.js?v=31';
+  cachedFile, cacheUsage, cacheRom, removeCachedRom, prefersSequentialCache, ROM_LIMIT,
+} from './gaemboy3ds-cache.js?v=32';
 import { allowedCacheGb, verifyGaemboyGrant, GIB } from './gaemboy3ds-entitlement.js?v=1';
 import { GAEMBOY_PREMIUM_PUBLIC_JWK } from './gaemboy3ds-premium-key.js?v=1';
 import { bindTouchControls } from './gaemboy3ds-touch.js?v=26';
@@ -685,7 +685,7 @@ async function restoreCacheCatalog() {
   } catch (error) { libStatus(`Libreria locale non disponibile: ${error.message}`, true); }
 }
 
-async function launchLibraryGame(key) {
+async function launchLibraryGame(key, { skipCache = false } = {}) {
   if (worker) return 'already-playing';
   const game = libGames.get(key);
   if (!game) return 'missing-game';
@@ -709,7 +709,7 @@ async function launchLibraryGame(key) {
       lastModified: game.lastModified, addedAt: game.addedAt, lastPlayed: game.lastPlayed });
     activeGameKey = key;
     boot(file, true); // Prevent the original worker copier from creating a duplicate mirror.
-    if (sessionFiles.has(key) && !game.cached) queueCache(file, game);
+    if (!skipCache && sessionFiles.has(key) && !game.cached) queueCache(file, game);
     return 'started';
   } catch (error) {
     libStatus(`Impossibile avviare «${game.name}»: ${error.message}`, true);
@@ -752,7 +752,8 @@ function queueCache(file, game) {
             lastProgressUpdate = now;
             dispatchEvent(new CustomEvent('gaemboy3ds:cache-usage', { detail: { ...libState } }));
           }
-          libStatus(`Salvataggio di «${game.name}»: ${Math.floor(fraction * 100)}% · puoi continuare a giocare`);
+          const phase = prefersSequentialCache() ? "preparazione prima dell’avvio" : "puoi continuare a giocare";
+          libStatus(`Salvataggio di «${game.name}»: ${Math.floor(fraction * 100)}% · ${phase}`);
         },
       });
       if (result.cached) {
@@ -760,6 +761,11 @@ function queueCache(file, game) {
         // reopened. On Safari the OPFS / IndexedDB backend may fail late.
         const stored = await cachedFile(game);
         if (!stored) throw new Error('La copia non è leggibile dopo la scrittura. Il file originale resta utilizzabile in questa sessione.');
+        // Verify real bytes, not just the OPFS .bin size and completion bitmap.
+        if (await romFingerprint(stored) !== game.key) {
+          await removeCachedRom(game.key);
+          throw new Error('Verifica della copia non riuscita: file locale diverso dalla ROM importata.');
+        }
         cacheNotice('');
         game.cached = true;
         sessionFiles.delete(game.key);
@@ -774,7 +780,15 @@ function queueCache(file, game) {
           'unsupported': 'Questo browser non consente l’archiviazione locale delle ROM.',
           'cancelled': 'Pulizia della cache annullata. La ROM non è stata salvata.'
         };
-        cacheNotice(reasons[result.reason] || `La ROM non è stata memorizzata (${result.reason}).`);
+        if (result.reason === 'source-unreadable') {
+          const pct = Math.max(0, Math.min(100, Math.floor(100 * (result.bytes || 0) / (result.total || file.size))));
+          cacheNotice(`Copia sospesa al ${pct}%: Safari non riesce a leggere il file originale. La parte già copiata è conservata. Reimporta la stessa ROM per riprendere senza perdere i salvataggi.`);
+        } else if (result.reason === 'NotReadableError') {
+          const stage = result.stage === 'writing' ? 'scrittura OPFS' : 'accesso alla memoria locale';
+          cacheNotice(`Copia sospesa: errore durante ${stage} (NotReadableError). La ROM non è ancora riapribile. La parte copiata resta disponibile per il prossimo tentativo.`);
+        } else {
+          cacheNotice(reasons[result.reason] || `La ROM non è stata memorizzata (${result.reason}).`);
+        }
         libStatus(libState.cacheMessage, false);
       }
     } catch (error) {
@@ -789,6 +803,7 @@ function queueCache(file, game) {
       await updateCacheFlags();
     }
   }).catch(error => { log('[cache] ' + error); });
+  return importQueue;
 }
 
 async function updateCacheFlags() {
@@ -819,8 +834,16 @@ async function importFiles(files, requestedKey = null) {
       if (!firstKey) {
         firstKey = game.key;
         renderLibrary();
-        // First game starts before the rest of a multi-file selection is catalogued.
-        await launchLibraryGame(firstKey);
+        // Safari sometimes invalidates large picker Files while both the
+        // emulator and OPFS worker read them. Cache the first ROM BEFORE boot.
+        // Chrome/Edge retain immediate boot plus background copy.
+        if (prefersSequentialCache() && !game.cached) {
+          libStatus(`Preparazione di «${game.name}» nella memoria locale prima dell’avvio…`);
+          await queueCache(file, game);
+          await launchLibraryGame(firstKey, { skipCache: true });
+        } else {
+          await launchLibraryGame(firstKey);
+        }
       } else if (!game.cached) {
         queueCache(file, game);
       }

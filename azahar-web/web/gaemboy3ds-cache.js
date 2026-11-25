@@ -4,6 +4,32 @@ export const ROM_LIMIT = 3 * 1024 ** 3; // Free public site; Premium limit is ex
 export const ROM_RESERVE = 64 * 1024 ** 2;
 const ROM_BLOCK = 1024 ** 2;
 const COPY_CHUNK = 4 * ROM_BLOCK;
+
+// Safari: copy before boot, avoiding simultaneous reads of the picked File by
+// the emulator worker and the cache worker. All other browsers keep fast boot.
+export function prefersSequentialCache(userAgent = globalThis.navigator?.userAgent || '') {
+  const ua = String(userAgent);
+  return /iP(?:hone|ad|od)/i.test(ua) ||
+    (/Safari\//i.test(ua) && !/(?:Chrome|Chromium|CriOS|Edg|EdgiOS|OPR|FxiOS)\//i.test(ua));
+}
+
+const READ_DELAYS = [0, 120, 350, 800, 1600, 2400];
+export async function readSourceChunk(file, offset, end) {
+  let lastError;
+  for (const delay of READ_DELAYS) {
+    if (delay) await new Promise(resolve => setTimeout(resolve, delay));
+    try {
+      const result = await file.slice(offset, end).arrayBuffer();
+      if (result.byteLength !== end - offset) throw new Error('Lettura incompleta del file originale');
+      return result;
+    } catch (error) {
+      lastError = error;
+      if (error?.name !== 'NotReadableError') throw error;
+    }
+  }
+  throw lastError;
+}
+
 const IDB_CHUNK_STORE = 'rom-cache-chunks';
 const IDB_STATE_STORE = 'rom-cache-state';
 const DIR_NAME = 'gaemboy-rom-mirror';
@@ -159,7 +185,9 @@ async function copyIdbChunks(file, game, onProgress) {
   if (state?.completed) { await removeIdbCache(game.key); }
   for (let offset = copied; offset < file.size; offset += COPY_CHUNK) {
     const end = Math.min(offset + COPY_CHUNK, file.size);
-    const blob = file.slice(offset, end);
+    // Materialise bytes now: persisting an un-read File.slice() can retain an
+    // invalid external File backing store after Safari revokes picker access.
+    const blob = new Blob([await readSourceChunk(file, offset, end)]);
     const db = await openDb();
     try {
       await new Promise((resolve, reject) => {
@@ -255,6 +283,84 @@ export async function removeCachedRom(key) {
   await removeIdbCache(key);
 }
 
+// Safari transfer protocol: read each 4 MiB chunk on the page, transfer only the
+// ArrayBuffer to a dedicated worker, write it to OPFS and wait for ACK. No 2 GB
+// buffer, no long-lived File clone in a worker, no concurrent core reads.
+async function transferCopy(file, game, onProgress) {
+  if (typeof Worker !== 'function') return { supported: false };
+  let worker;
+  try {
+    worker = new Worker(new URL('./gaemboy3ds-cache-transfer-worker.js?v=07', import.meta.url), { type: 'module' });
+  } catch { return { supported: false }; }
+  return new Promise(resolve => {
+    let settled = false;
+    let offset = 0;
+    let resumed = 0;
+    let sourceFailure = null;
+    let abortTimer = null;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      if (abortTimer !== null) clearTimeout(abortTimer);
+      worker.terminate();
+      resolve(result);
+    };
+    const failSource = error => {
+      sourceFailure = { supported: true, cached: false, reason: 'source-unreadable',
+        error: String(error?.message || error), bytes: offset, total: file.size };
+      // Let the worker close its OPFS access handle before the next reimport.
+      try { worker.postMessage({ type: 'abort' }); }
+      catch { finish(sourceFailure); return; }
+      abortTimer = setTimeout(() => finish(sourceFailure), 2000);
+    };
+    const pump = async () => {
+      if (settled) return;
+      if (offset >= file.size) {
+        worker.postMessage({ type: 'finish' });
+        return;
+      }
+      const end = Math.min(file.size, offset + COPY_CHUNK);
+      try {
+        const bytes = await readSourceChunk(file, offset, end);
+        if (!settled) worker.postMessage({ type: 'chunk', offset, bytes }, [bytes]);
+      } catch (error) { if (!settled) failSource(error); }
+    };
+    worker.onerror = event => {
+      event.preventDefault?.();
+      finish({ supported: false, reason: 'transfer-worker-unavailable' });
+    };
+    worker.onmessage = ({ data }) => {
+      if (settled) return;
+      if (data.type === 'aborted' && sourceFailure) {
+        finish(sourceFailure);
+      } else if (sourceFailure) {
+        return;
+      } else if (data.type === 'ready') {
+        resumed = data.resumed || 0;
+        offset = resumed;
+        onProgress(file.size ? offset / file.size : 0, offset, file.size, resumed);
+        void pump();
+      } else if (data.type === 'written') {
+        if (!Number.isSafeInteger(data.bytes) || data.bytes < offset || data.bytes > file.size) {
+          finish({ supported: true, cached: false, reason: 'invalid-worker-ack' }); return;
+        }
+        offset = data.bytes;
+        onProgress(offset / file.size, offset, file.size, resumed);
+        void pump();
+      } else if (data.type === 'complete') {
+        finish({ supported: true, cached: true, backend: 'opfs-transfer', resumed });
+      } else if (data.type === 'unsupported') {
+        finish({ supported: false, reason: 'opfs-sync-unsupported' });
+      } else if (data.type === 'error') {
+        finish({ supported: true, cached: false, reason: data.code || 'opfs-write-failed',
+          error: data.message, stage: data.stage, bytes: offset, total: file.size });
+      }
+    };
+    try { worker.postMessage({ type: 'start', key: game.key, size: file.size }); }
+    catch { finish({ supported: false, reason: 'transfer-post-failed' }); }
+  });
+}
+
 // Uses a dedicated worker so large ROMs never need to be buffered in the UI thread.
 // Explicit 'unsupported' falls back to createWritable() in the page.
 async function incrementalCopy(file, game, onProgress) {
@@ -321,6 +427,10 @@ export async function cacheRom(file, game, { activeKeys = new Set(), confirmEvic
     }
     // Worker API is supported in WebKit; it publishes both .bin AND .map via
     // createSyncAccessHandle, never createWritable() alone.
+    if (dir && prefersSequentialCache()) {
+      const transfer = await transferCopy(file, game, onProgress);
+      if (transfer.supported) return transfer;
+    }
     if (dir) {
       const incremental = await incrementalCopy(file, game, onProgress);
       if (incremental.supported) return incremental;
