@@ -366,6 +366,22 @@
     scheduleRender();
   }
   function launch(g) {
+    const manager = window.Gaemboy3DSCacheLibrary;
+    if (manager?.enabled && typeof manager.launch === 'function') {
+      setMessage('Apertura di «' + g.title + '»…');
+      // Do not hide our home until the player ACTUALLY switches to the game view.
+      // Otherwise a slow OPFS getFile() exposes the obsolete selection screen.
+      Promise.resolve(manager.launch(g.path)).then(result => {
+        if (result === 'needs-reimport') {
+          setMessage('Seleziona di nuovo la ROM di «' + g.title + '». I salvataggi sono conservati.');
+        } else if (result === 'failed' || result === 'missing-game') {
+          setMessage('Impossibile avviare il gioco. Riprovare dall’elenco.', 'error');
+        } else if (result === 'already-playing') {
+          setMessage('Un gioco è già avviato. Torna al gioco per continuare.');
+        }
+      }).catch(err => setMessage('Avvio non riuscito: ' + (err?.message || err), 'error'));
+      return;
+    }
     if (!g.element?.isConnected) {setMessage('Per avviare questo gioco conferma la cartella salvata; la copertina rimane visibile senza permessi.');chooseFolder();return;}
     launchPending=true;
     root.hidden=true; // native player reuses in-page folder/file references when its own access is valid
@@ -390,10 +406,17 @@
     if(!window.Gaemboy3DSCacheLibrary?.enabled)return;
     const used=state?.used||0, limit=state?.limit||3*1024**3;
     const size=n=>n>=1024**3?(n/1024**3).toFixed(2)+' GB':Math.round(n/1024**2)+' MB';
-    root.querySelector('#gb3-folder-name').textContent=games.length+' giochi nella tua libreria';
-    root.querySelector('#gb3-folder-sub').textContent=state?.supported===false
-      ? 'Memoria locale non disponibile: le ROM si potranno comunque aprire.'
-      : `Cache locale ${size(used)} / ${size(limit)} · Salvataggi separati`;
+    root.querySelector('#gb3-folder-name').textContent=games.length+' '+(games.length===1?'gioco':'giochi')+' nella tua libreria';
+    root.querySelector('#gb3-folder-sub').textContent=`Cache locale: ${size(used)} / ${(limit / (1024 ** 3)).toFixed(2)} GB`;
+    const progress=root.querySelector('#gb3-cache-progress');
+    progress.hidden=!state?.copying;
+    progress.textContent=state?.copying ? `Salvataggio in corso: ${state.copyProgress ?? 0}% · lascia aperta la pagina fino al termine` : '';
+    root.querySelector('#gb3-cache-alert').hidden=!state?.cacheMessage;
+    root.querySelector('#gb3-cache-alert').textContent=state?.cacheMessage || '';
+    const infoStatus=root.querySelector('#gb3-info-status');
+    if(infoStatus) infoStatus.textContent=state?.copying
+      ? `Copia della ROM: ${state.copyProgress ?? 0}%. La cache diventerà riutilizzabile al 100%.`
+      : state?.cacheMessage || (state?.supported===false ? 'Archiviazione locale non disponibile nel browser.' : 'Le ROM copiate completamente possono essere riaperte senza importarle di nuovo.');
     const quotaControl=root.querySelector('#gb3-cache-tier');
     const quotaWrap=root.querySelector('#gb3-cache-settings');
     if (quotaControl && quotaWrap) {
@@ -549,18 +572,11 @@
   function openSingleGame() {
     const btn=document.querySelector('#pick') || originalButton(/^apri\s+rom/i);
     if(!btn){setMessage('Apertura file singolo non disponibile in questa versione.','error');return;}
-    launchPending=true;
-    root.hidden=true;
-    try {btn.click();} catch(e) {restoreHome();setMessage('Impossibile aprire il file: '+e.message,'error');return;}
-    clearTimeout(pollTimer);
-    const started=Date.now();
-    const check=()=>{
-      if(!launchPending)return;
-      if(hasGameView()){launchPending=false;return;}
-      if(Date.now()-started>8500){restoreHome();return;}
-      pollTimer=setTimeout(check,400);
-    };
-    pollTimer=setTimeout(check,400);
+    // Keep Gaemboy visible while the native file picker is waiting for a choice.
+    // A game-booting event hides it only after the real player becomes visible.
+    launchPending=false;
+    setMessage('Seleziona una ROM 3DS dal tuo dispositivo.');
+    try {btn.click();} catch(e) {setMessage('Impossibile aprire il file: '+e.message,'error');}
   }
   function importGames(fromPicker=false) {
     if(scanActive) return;
@@ -602,7 +618,7 @@
         <header class="gb3-header"><div class="gb3-brand"><img src="home-v5-assets/logo.png" alt="" width="48" height="48"><div class="gb3-brand-name"><strong>GAEMBOY</strong><span>3DS LIBRARY</span></div></div><span class="gb3-header-note">La tua console, i tuoi giochi</span></header>
         <div class="gb3-scroller" id="gb3-scroller">
         <section class="gb3-config" aria-label="Gestione libreria">
-          <div class="gb3-config-copy"><div class="gb3-config-icon">${icons.folder}</div><div><div class="gb3-eyebrow">LIBRERIA LOCALE</div><strong id="gb3-folder-name">Nessun gioco importato</strong><p id="gb3-folder-sub">ROM salvate automaticamente, senza caricarle online</p></div></div>
+          <div class="gb3-config-copy"><div class="gb3-config-icon">${icons.folder}</div><div><div class="gb3-eyebrow">LIBRERIA LOCALE</div><strong id="gb3-folder-name">Nessun gioco importato</strong><div class="gb3-cache-summary"><span id="gb3-folder-sub">Cache locale: 0 MB / 3.00 GB</span><button id="gb3-cache-info" type="button" class="gb3-info-link" aria-haspopup="dialog" aria-controls="gb3-cache-modal">Maggiori info</button></div><p id="gb3-cache-progress" class="gb3-cache-progress" role="status" hidden></p><p id="gb3-cache-alert" class="gb3-cache-alert" role="status" hidden></p></div></div>
           <div class="gb3-config-buttons"><label id="gb3-cache-settings" class="gb3-cache-settings" hidden>Cache Premium <select id="gb3-cache-tier" aria-label="Spazio cache Premium"><option value="3">3 GB</option><option value="5">5 GB</option><option value="8">8 GB</option></select></label><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-main">+ Aggiungi gioco</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-soft" hidden>${icons.refresh} Aggiorna libreria</button></div>
         </section>
         <div id="gb3-status" class="gb3-status" role="status" aria-live="polite" hidden></div>
@@ -622,6 +638,22 @@
         </div>
       </div>
       <input type="file" accept="image/png,image/jpeg,image/webp" id="gb3-cover-input" hidden>
+      <div id="gb3-cache-modal" class="gb3-modal" role="dialog" aria-modal="true" aria-labelledby="gb3-cache-modal-title" tabindex="-1" hidden>
+        <section class="gb3-dialog gb3-cache-dialog">
+          <header class="gb3-cache-dialog-head"><h2 id="gb3-cache-modal-title">Come funziona la cache?</h2><button id="gb3-cache-close" type="button" aria-label="Chiudi informazioni cache">×</button></header>
+          <p>Quando aggiungi un gioco, Gaemboy prova a conservarne una copia <strong>sul tuo dispositivo</strong>. Non viene caricata su un server.</p>
+          <ol>
+            <li><strong>Gioca subito.</strong> Il gioco può partire mentre viene eseguita la copia.</li>
+            <li><strong>Riapri senza importare.</strong> Al 100%, la ROM è pronta per le prossime partite.</li>
+            <li><strong>Spazio gestito automaticamente.</strong> Se la cache è piena, vengono eliminate prima le ROM meno utilizzate, dopo la tua autorizzazione iniziale.</li>
+            <li><strong>I salvataggi restano separati.</strong> Quando una ROM esce dalla cache, la card e i progressi restano. Basta reimportare lo stesso file.</li>
+          </ol>
+          <p><strong>Spazio:</strong> 3 GB gratuiti. Da Gaemboy Premium è possibile sbloccare 5 o 8 GB quando l'abbonamento è verificato.</p>
+          <p id="gb3-info-status" role="status">Controllo della cache in corso…</p>
+          <p class="gb3-cache-footnote">La cache dipende dallo spazio concesso dal browser. Se cancelli i dati del sito, anche i salvataggi locali possono andare persi: esporta regolarmente un backup.</p>
+          <div class="gb3-dialog-row"><button id="gb3-cache-understood" type="button" class="gb3-dialog-save">Ho capito</button></div>
+        </section>
+      </div>
       <div id="gb3-edit-modal" class="gb3-modal" role="dialog" aria-modal="true" aria-label="Modifica gioco" hidden>
         <form id="gb3-edit-form" class="gb3-dialog">
           <h2>Modifica gioco</h2><p id="gb3-edit-context"></p>
@@ -632,6 +664,31 @@
       </div>
     `;
     document.body.append(root);
+    const cacheModal = root.querySelector('#gb3-cache-modal');
+    const cacheInfo = root.querySelector('#gb3-cache-info');
+    const closeCacheInfo = () => { cacheModal.hidden=true; cacheInfo.focus(); };
+    cacheInfo.addEventListener('click', () => { cacheModal.hidden=false; root.querySelector('#gb3-cache-close').focus(); });
+    root.querySelector('#gb3-cache-close').addEventListener('click', closeCacheInfo);
+    root.querySelector('#gb3-cache-understood').addEventListener('click', closeCacheInfo);
+    cacheModal.addEventListener('click', e => { if (e.target === cacheModal) closeCacheInfo(); });
+    cacheModal.addEventListener('keydown', e => {
+      if (e.key === 'Escape') {e.preventDefault();closeCacheInfo();}
+      if (e.key !== 'Tab') return;
+      const controls=[...cacheModal.querySelectorAll('button:not([disabled])')];
+      const first=controls[0],last=controls[controls.length-1];
+      if (e.shiftKey && document.activeElement === first) {e.preventDefault();last.focus();}
+      else if (!e.shiftKey && document.activeElement === last) {e.preventDefault();first.focus();}
+    });
+    window.addEventListener('gaemboy3ds:game-booting', () => {
+      cacheModal.hidden=true;
+      root.hidden=true;
+      launchPending=false;
+      clearTimeout(pollTimer);
+    });
+    window.addEventListener('gaemboy3ds:picker-cancelled', () => {
+      launchPending=false;
+      setMessage('Selezione annullata: la tua libreria è sempre disponibile.');
+    });
     root.querySelector('#gb3-cache-tier').addEventListener('change', e => {
       const ok=window.Gaemboy3DSCacheLibrary?.chooseCacheGb(Number(e.target.value));
       if(!ok)setMessage('La cache da 5 o 8 GB richiede Gaemboy Premium.', 'info');

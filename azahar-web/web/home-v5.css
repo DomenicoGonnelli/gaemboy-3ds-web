@@ -517,3 +517,23 @@
 #gb3-home .gb3-cache-settings{display:flex;align-items:center;gap:8px;font-size:12px;color:#f7d3e6;white-space:nowrap;}
 #gb3-home .gb3-cache-settings[hidden]{display:none!important;}
 #gb3-home .gb3-cache-settings select{appearance:auto;background:#47163e;border:1px solid #a24c80;border-radius:10px;color:#fff;padding:9px 10px;font-size:12px;min-height:40px;}
+
+/* PATCH05: compact cache line and informative modal, without changing game cards. */
+#gb3-home .gb3-cache-summary{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:4px}
+#gb3-home #gb3-folder-sub{margin:0;font-size:12px;color:var(--dim)}
+#gb3-home .gb3-info-link{padding:2px 0;border:0;background:none;color:#ff9bc2;font-size:12px;font-weight:650;text-decoration:underline;text-underline-offset:3px;cursor:pointer}
+#gb3-home .gb3-info-link:hover{color:#fff}
+#gb3-home .gb3-cache-progress,#gb3-home .gb3-cache-alert{margin:5px 0 0;font-size:11px;max-width:450px}
+#gb3-home .gb3-cache-progress{color:#bcf4dc}
+#gb3-home .gb3-cache-alert{color:#ffbecc}
+#gb3-home .gb3-cache-dialog{width:min(520px,100%);max-height:min(85vh,680px);overflow-y:auto;gap:15px;padding:25px}
+#gb3-home .gb3-cache-dialog-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+#gb3-home .gb3-cache-dialog-head h2{font-size:20px;line-height:1.2}
+#gb3-home .gb3-cache-dialog-head button{width:34px;height:34px;border-radius:9px;border:1px solid #8a4c70;background:#532245;color:#fff;font-size:24px;line-height:1;flex:none}
+#gb3-home .gb3-cache-dialog p{font-size:13px;color:#f1d6e3;line-height:1.55}
+#gb3-home .gb3-cache-dialog ol{margin:0;padding-left:22px;display:grid;gap:10px;color:#f8e3ed;font-size:13px;line-height:1.45}
+#gb3-home .gb3-cache-dialog li::marker{color:#f49cbd;font-weight:700}
+#gb3-home .gb3-cache-dialog #gb3-info-status{border:1px solid #765169;background:#260922;border-radius:10px;padding:10px 12px;color:#fff}
+#gb3-home .gb3-cache-dialog .gb3-cache-footnote{font-size:11px;color:#caacc0}
+#gb3-home .gb3-cache-dialog .gb3-dialog-row .gb3-dialog-save{padding:11px 18px;font-weight:700}
+@media(max-width:650px){#gb3-home .gb3-cache-summary{gap:6px 10px}}

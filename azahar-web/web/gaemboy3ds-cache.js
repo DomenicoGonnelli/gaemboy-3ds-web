@@ -53,11 +53,12 @@ export function planEvictions(groups, incomingKey, incomingSize, freeBytes, prot
   const active = groups.filter(g => g.key !== incomingKey);
   const ownSize = groups.find(g => g.key === incomingKey)?.bytes || 0;
   let used = groups.reduce((n, g) => n + g.bytes, 0);
-  let free = freeBytes + ownSize;
+  let free = freeBytes;
   const evict = [];
-  // Atomic createWritable() may temporarily need a complete new copy of incomingSize.
-  // Never assume that an existing .bin will be rewritten in place.
-  const needFree = incomingSize + ROM_RESERVE;
+  // A resumable OPFS sync writer grows the existing .bin in place. The fallback
+  // createWritable() may instead need a second copy; callers can opt into that reserve.
+  const remaining = Math.max(0, incomingSize - ownSize);
+  const needFree = remaining + ROM_RESERVE;
   const candidates = active.filter(g => !protectedKeys.has(g.key))
     .sort((a, b) => (a.lastPlayed || a.used || 0) - (b.lastPlayed || b.used || 0));
   while ((used - ownSize + incomingSize > limitBytes || free < needFree) && candidates.length) {
@@ -169,6 +170,42 @@ export async function removeCachedRom(key) {
   if (dir) await eraseMirror(dir, key);
 }
 
+// Uses a dedicated worker so large ROMs never need to be buffered in the UI thread.
+// Explicit 'unsupported' falls back to createWritable() in the page.
+async function incrementalCopy(file, game, onProgress) {
+  if (typeof Worker !== 'function') return { supported: false };
+  let worker;
+  try {
+    worker = new Worker(new URL('./gaemboy3ds-cache-copy-worker.js', import.meta.url), { type: 'module' });
+  } catch { return { supported: false }; }
+  return new Promise(resolve => {
+    let settled = false;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      worker.terminate();
+      resolve(result);
+    };
+    worker.onerror = event => {
+      event.preventDefault?.();
+      finish({ supported: false, reason: 'worker-unavailable' });
+    };
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'progress') {
+        onProgress(data.bytes / data.total, data.bytes, data.total, data.resumed || 0);
+      } else if (data.type === 'complete') {
+        finish({ supported: true, cached: true, resumed: data.resumed || 0 });
+      } else if (data.type === 'unsupported') {
+        finish({ supported: false });
+      } else if (data.type === 'error') {
+        finish({ supported: true, cached: false, reason: data.code || 'write-failed', error: data.message });
+      }
+    };
+    try { worker.postMessage({ file, key: game.key }); }
+    catch (error) { finish({ supported: false, reason: error?.name || 'worker-post-failed' }); }
+  });
+}
+
 export async function cacheRom(file, game, { activeKeys = new Set(), confirmEviction = () => false, onProgress = () => {}, limitBytes = ROM_LIMIT } = {}) {
   if (!validRom(file) || file.size !== game.size) throw new Error('File ROM non corrispondente.');
   // Caller may raise the cap only after validating a signed Gaemboy entitlement.
@@ -186,11 +223,22 @@ export async function cacheRom(file, game, { activeKeys = new Set(), confirmEvic
       return { cached: false, reason: 'quota-unavailable' };
     const free = Math.max(0, usage.quota - usage.usage);
     const plan = planEvictions(groups, game.key, game.size, free, activeKeys, limitBytes);
-    if (!plan.enough) return { cached: false, reason: 'space' };
+    if (!plan.enough) return { cached: false, reason: 'space', freeBytes: free, requiredBytes: game.size + ROM_RESERVE };
     if (plan.evict.length && !(await confirmEviction(plan.evict)))
       return { cached: false, reason: 'cancelled' };
     // Replacing an incomplete mirror invalidates its bitmap first; never publish partial bytes.
     for (const victim of plan.evict) await eraseMirror(dir, victim.key);
+    // Keep any incomplete .bin: a repeated import can continue after the last
+    // fully-written 4 MiB chunk. The worker publishes the .map only on success.
+    const incremental = await incrementalCopy(file, game, onProgress);
+    if (incremental.supported) return incremental;
+    // Fallback is an atomic copy. It needs room for a temporary full file, not
+    // just the missing part of an existing mirror.
+    const updated = await scanMirrors(dir);
+    const priorSize = updated.find(g => g.key === game.key)?.bytes || 0;
+    const recent = await navigator.storage.estimate();
+    if (recent.quota - recent.usage + priorSize < file.size + ROM_RESERVE)
+      return { cached: false, reason: 'space' };
     await eraseMirror(dir, game.key);
     const target = await dir.getFileHandle(`${game.key}.bin`, { create: true });
     const writer = await target.createWritable();
@@ -200,7 +248,7 @@ export async function cacheRom(file, game, { activeKeys = new Set(), confirmEvic
         const end = Math.min(file.size, offset + COPY_CHUNK);
         await writer.write(await file.slice(offset, end).arrayBuffer());
         copied = end;
-        onProgress(copied / file.size);
+        onProgress(copied / file.size, copied, file.size);
         // Yield to rendering/input; the original File remains available to the running core.
         await new Promise(resolve => setTimeout(resolve, 0));
       }

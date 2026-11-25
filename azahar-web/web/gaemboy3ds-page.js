@@ -261,6 +261,7 @@ function boot(file, managedCache = false) {
   $('selection-view').hidden = $('selection-footer').hidden = true;
   $('game-view').hidden = false;
   document.body.classList.add('playing');
+  dispatchEvent(new CustomEvent('gaemboy3ds:game-booting', { detail: { name: file.name } }));
   $('game-title').textContent = file.name;
   $('notice').hidden = true;
   $('game-status').textContent = 'Caricamento…';
@@ -549,7 +550,21 @@ let pendingImportKey = null;
 let cacheBusy = false;
 let managedCachePct = null;
 let importQueue = Promise.resolve();
-const libState = { ready: false, used: 0, limit: ROM_LIMIT, status: '', premium: false, maxGb: 3, selectedGb: 3 };
+const CACHE_LAST_ERROR = 'gb3-cache-last-error';
+const CACHE_PENDING_COPY = 'gb3-cache-pending-copy';
+function getCachePreference(key) { try { return localStorage.getItem(key) || ''; } catch { return ''; } }
+function writeCachePreference(key, value) {
+  try { if (value) localStorage.setItem(key, value); else localStorage.removeItem(key); } catch { /* private browsing */ }
+}
+const interruptedCopy = getCachePreference(CACHE_PENDING_COPY);
+const previousCacheMessage = interruptedCopy
+  ? `La copia di «${interruptedCopy}» è stata interrotta. Reimporta la ROM per riprenderla.`
+  : getCachePreference(CACHE_LAST_ERROR);
+const libState = { ready: false, used: 0, limit: ROM_LIMIT, status: '', premium: false, maxGb: 3, selectedGb: 3, copying: false, copyProgress: null, cacheMessage: previousCacheMessage };
+function cacheNotice(message) {
+  libState.cacheMessage = message;
+  writeCachePreference(CACHE_LAST_ERROR, message);
+}
 let verifiedGrant = null;
 let selectedTierInMemory = null;
 const CACHE_PREF = 'gb3-cache-preferred-tier';
@@ -617,6 +632,7 @@ async function updateSpace() {
     libState.used = usage.used;
     updatePremiumCacheLimit();
     libState.supported = usage.supported;
+    if (!cacheBusy) libState.copyProgress = null;
   } catch (error) {
     libState.supported = false;
     log('[cache] Impossibile leggere lo spazio: ' + (error.message || error));
@@ -670,9 +686,9 @@ async function restoreCacheCatalog() {
 }
 
 async function launchLibraryGame(key) {
-  if (worker) return;
+  if (worker) return 'already-playing';
   const game = libGames.get(key);
-  if (!game) return;
+  if (!game) return 'missing-game';
   let file = sessionFiles.get(key) || null;
   if (!file) {
     try { file = await cachedFile(game); }
@@ -684,7 +700,7 @@ async function launchLibraryGame(key) {
     $('file').multiple = false;
     $('file').value = '';
     $('file').click();
-    return;
+    return 'needs-reimport';
   }
   try {
     await ensureAudio();
@@ -694,16 +710,26 @@ async function launchLibraryGame(key) {
     activeGameKey = key;
     boot(file, true); // Prevent the original worker copier from creating a duplicate mirror.
     if (sessionFiles.has(key) && !game.cached) queueCache(file, game);
-  } catch (error) { libStatus(`Impossibile avviare «${game.name}»: ${error.message}`, true); }
+    return 'started';
+  } catch (error) {
+    libStatus(`Impossibile avviare «${game.name}»: ${error.message}`, true);
+    return 'failed';
+  }
 }
 
 function queueCache(file, game) {
   importQueue = importQueue.then(async () => {
     cacheBusy = true;
+    libState.copying = true;
+    libState.copyProgress = 0;
+    cacheNotice('');
+    writeCachePreference(CACHE_PENDING_COPY, game.name);
     try {
-      libStatus(`Ottimizzazione spazio di «${game.name}» in corso…`);
+      libStatus(`Salvataggio locale di «${game.name}» in corso…`);
       await premiumReady;
       const limitBytes = updatePremiumCacheLimit();
+      const previousUsage = libState.used;
+      let lastProgressUpdate = 0;
       const result = await cacheRom(file, game, {
         limitBytes,
         activeKeys: new Set(activeGameKey ? [activeGameKey] : []),
@@ -715,24 +741,46 @@ function queueCache(file, game) {
           if (agreed) localStorage.setItem('gb3-cache-auto-evict', '1');
           return agreed;
         },
-        onProgress: fraction => {
+        onProgress: (fraction, copiedBytes, totalBytes, resumedBytes = 0) => {
           managedCachePct = Math.floor(fraction * 100);
-          libStatus(`Memorizzazione «${game.name}»: ${Math.floor(fraction * 100)}% (puoi già giocare)`);
+          libState.copyProgress = managedCachePct;
+          // The OPFS writer can be mid-transaction. Reflect its observed progress
+          // without treating a partial .bin as a reusable ROM.
+          libState.used = Math.min(libState.limit, Math.max(previousUsage, previousUsage + Math.max(0, copiedBytes - resumedBytes)));
+          const now = Date.now();
+          if (now - lastProgressUpdate > 350 || fraction === 1) {
+            lastProgressUpdate = now;
+            dispatchEvent(new CustomEvent('gaemboy3ds:cache-usage', { detail: { ...libState } }));
+          }
+          libStatus(`Salvataggio di «${game.name}»: ${Math.floor(fraction * 100)}% · puoi continuare a giocare`);
         },
       });
       if (result.cached) {
+        cacheNotice('');
         game.cached = true;
         sessionFiles.delete(game.key);
         libStatus(`«${game.name}» pronto per le prossime partite.`, false);
       } else if (result.reason === 'oversize') {
-        libStatus(`«${game.name}» supera ${libState.selectedGb} GB di cache: puoi giocare, ma andrà reimportato.`, false);
+        libState.cacheMessage = `La ROM supera la cache da ${libState.selectedGb} GB. Il gioco funziona, ma andrà reimportato.`;
+        libStatus(libState.cacheMessage, false);
       } else {
-        libStatus(`«${game.name}» avviabile: copia locale non disponibile (${result.reason}).`, false);
+        const reasons = {
+          'space': 'Spazio insufficiente nel browser per salvare la ROM. Il gioco continua a funzionare.',
+          'quota-unavailable': 'Il browser non comunica lo spazio disponibile. Copia locale non eseguita.',
+          'unsupported': 'Questo browser non consente l’archiviazione locale delle ROM.',
+          'cancelled': 'Pulizia della cache annullata. La ROM non è stata salvata.'
+        };
+        cacheNotice(reasons[result.reason] || `La ROM non è stata memorizzata (${result.reason}).`);
+        libStatus(libState.cacheMessage, false);
       }
     } catch (error) {
-      libStatus(`Copia ROM non riuscita; puoi continuare a giocare: ${error.message}`, true);
+      cacheNotice(`Copia non riuscita: ${error.message}`);
+      libStatus(`Puoi continuare a giocare, ma ${libState.cacheMessage}`, true);
     } finally {
       cacheBusy = false;
+      writeCachePreference(CACHE_PENDING_COPY, '');
+      libState.copying = false;
+      libState.copyProgress = null;
       managedCachePct = null;
       await updateCacheFlags();
     }
@@ -790,7 +838,7 @@ $('file').onchange = e => {
   pendingImportKey = null;
   void importFiles(e.target.files, pending);
 };
-$('file').addEventListener('cancel', () => { pendingImportKey = null; });
+$('file').addEventListener('cancel', () => { pendingImportKey = null; dispatchEvent(new Event('gaemboy3ds:picker-cancelled')); });
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); if (!worker) void importFiles(e.dataTransfer?.files); });
 
@@ -804,6 +852,10 @@ window.Gaemboy3DSCacheLibrary = {
   chooseCacheGb: choosePremiumCacheGb,
   status: () => ({ ...libState, games: libGames.size, copying: cacheBusy }),
   add: () => $('pick').click(),
+  launch: async path => {
+    const game = [...libGames.values()].find(g => gamePath(g) === path);
+    return game ? launchLibraryGame(game.key) : 'missing-game';
+  },
   fileForCover: async path => {
     const game = [...libGames.values()].find(g => gamePath(g) === path);
     return game ? (sessionFiles.get(game.key) || await cachedFile(game)) : null;
@@ -870,6 +922,7 @@ gameMenu.addEventListener('close', () => {
   canvas.focus({ preventScroll: true });
 });
 $('back-library').onclick = async () => {
+  if (cacheBusy && !confirm('La ROM è ancora in fase di salvataggio. Uscendo adesso la copia resterà incompleta e potrebbe essere necessario reimportarla. Continuare?')) return;
   if (!confirm('Tornare alla selezione giochi? I progressi non salvati nel gioco o in uno stato andranno persi.')) return;
   resetInput();
   if (storageAvailable) {
