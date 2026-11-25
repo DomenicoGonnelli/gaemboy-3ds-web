@@ -80,6 +80,36 @@
     if (!img || !img.getAttribute('src') || img.style.display === 'none') return '';
     return img.currentSrc || img.src;
   };
+  // Migrates hero history and preview thumbnails from the former folder-based key
+  // to the new stable ROM cache key. Only a unique filename match is accepted.
+  const attemptedMigration = new Set();
+  async function migrateOldHistory() {
+    const keys = games().map(getKey);
+    const originals = [...new Set([...Object.keys(played), ...Object.keys(saved)])];
+    for (const now of keys) {
+      if (attemptedMigration.has(now)) continue;
+      attemptedMigration.add(now);
+      if (played[now] || saved[now]) continue;
+      const basename = now.split('/').pop();
+      if(keys.filter(k => k.split('/').pop() === basename).length !== 1) continue;
+      const matches = originals.filter(old => old !== now && old.split('/').pop() === basename);
+      if (matches.length !== 1) continue;
+      const old = matches[0];
+      if (played[old]) played[now] = played[old];
+      if (saved[old]) {
+        const entry = structuredClone(saved[old]);
+        for (const shot of entry.shots || []) {
+          const blob = await read(ART, 'gb55-shot:' + old + ':' + shot.id);
+          if (blob instanceof Blob) await write(ART, 'gb55-shot:' + now + ':' + shot.id, blob);
+        }
+        saved[now] = entry;
+        void loadThumbs(now);
+      }
+      await Promise.all([write(PREF,PLAYED_KEY,played),write(PREF,SAVED_KEY,saved)]);
+      console.info('[GAEMBOY 3DS] Previous save previews linked to cache library:', basename);
+      scheduleRender();
+    }
+  }
   function formatMiniDates() {
     for (const card of games()) {
       const key = getKey(card), info = q('.mini-info', card);
@@ -235,6 +265,7 @@
     grid.closest('.gb3-content')?.classList.toggle('gb55-only-featured', Boolean(featuredMatchesFilter && games().length === 1));
     renderHero(featuredMatchesFilter ? info : null);
     formatMiniDates();
+    void migrateOldHistory();
   }
   function scheduleRender() {
     if (renderQueued) return;

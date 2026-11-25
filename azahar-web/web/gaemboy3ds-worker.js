@@ -188,29 +188,47 @@ async function openRomMirror(file, key) {
   return mirror;
 }
 // Keeps the mirror directory within quota by deleting the least recently used other mirrors.
+// Application-level cap for disposable ROM mirrors. Save states are in IDBFS and are never touched.
+const ROM_MIRROR_LIMIT = 2 * 1024 * 1024 * 1024;
+const ROM_MIRROR_RESERVE = 64 * 1024 * 1024;
 async function makeRoomForMirror(dir, key, size) {
-  const others = [];
+  // An oversized ROM can still be played from the user-selected File without caching it.
+  if (size > ROM_MIRROR_LIMIT) {
+    logLine('[gaemboy] ROM oltre il limite cache: avvio senza copia locale');
+    return false;
+  }
+  const groups = new Map();
   for await (const [name, entry] of dir.entries()) {
+    if (entry.kind !== 'file' || !/\.(bin|map)$/.test(name)) continue;
     const k = name.replace(/\.(bin|map)$/, '');
-    if (k === key || entry.kind !== 'file') continue;
     const f = await entry.getFile();
-    let o = others.find((x) => x.key === k);
-    if (!o) others.push((o = { key: k, bytes: 0, used: 0 }));
-    o.bytes += f.size;
-    o.used = Math.max(o.used, f.lastModified);
+    if (!groups.has(k)) groups.set(k, { key: k, bytes: 0, used: 0 });
+    const g = groups.get(k);
+    g.bytes += f.size;
+    g.used = Math.max(g.used, f.lastModified);
   }
-  others.sort((a, b) => a.used - b.used);
+  const current = groups.get(key)?.bytes || 0;
+  let used = [...groups.values()].reduce((sum, g) => sum + g.bytes, 0);
+  // Existing incomplete mirror files are preallocated to full size. Do not double-count them.
+  const projected = Math.max(size, current) + 4096;
   const { usage = 0, quota = 0 } = await navigator.storage.estimate();
-  let free = quota - usage;
-  const need = size + (64 << 20);
-  while (free < need && others.length) {
-    const o = others.shift();
-    for (const ext of ['bin', 'map']) await dir.removeEntry(`${o.key}.${ext}`).catch(() => {});
-    free += o.bytes;
-    logLine(`[gaemboy] rimossa una vecchia copia locale (${(o.bytes / 1048576).toFixed(0)} MB)`);
+  let free = Math.max(0, quota - usage);
+  const neededFree = Math.max(0, projected - current) + ROM_MIRROR_RESERVE;
+  const others = [...groups.values()].filter(g => g.key !== key).sort((a, b) => a.used - b.used);
+  while ((used - current + projected > ROM_MIRROR_LIMIT || free < neededFree) && others.length) {
+    const old = others.shift();
+    for (const ext of ['bin', 'map']) {
+      await dir.removeEntry(`${old.key}.${ext}`).catch(err => {
+        if (err?.name !== 'NotFoundError') throw err;
+      });
+    }
+    used -= old.bytes;
+    free += old.bytes;
+    logLine(`[gaemboy] cache ROM: rimossa copia meno recente (${(old.bytes / 1048576).toFixed(0)} MB); salvataggi conservati`);
   }
-  return free >= need;
+  return used - current + projected <= ROM_MIRROR_LIMIT && free >= neededFree;
 }
+
 function cacheWorkerfsReads(WORKERFS) {
   const ops = WORKERFS.stream_ops;
   if (ops.__gbCached) return;
@@ -591,7 +609,7 @@ self.onmessage = async ({ data }) => {
   try {
     gameKey = await fingerprint(file);
     try {
-      romMirror = await openRomMirror(file, gameKey);
+      romMirror = data.managedCache ? null : await openRomMirror(file, gameKey);
     } catch (err) {
       logLine(`[gaemboy] copia locale della ROM non disponibile: ${err?.name || ''} ${err?.message || err}`);
     }

@@ -1,6 +1,6 @@
 /* GAEMBOY 3DS Home v5.2 — standalone GPL-3.0-or-later frontend adapter.
  * Does not modify the Azahar core or existing gameplay view.
- * Requires the underlying app's #library-list, original folder and refresh controls.
+ * Reads the underlying #library-list supplied by the persistent ROM cache catalog.
  */
 (() => {
   'use strict';
@@ -177,7 +177,16 @@
     catch {setMessage('Link da condividere: '+baseUrl,'info');}
   }
   async function removeFromLibrary(g) {
-    if(!window.confirm('Rimuovere "'+g.title+'" dalla libreria?\nIl file ROM non verrà cancellato dal dispositivo.')) return;
+    if(!window.confirm('Rimuovere "'+g.title+'" dalla libreria?\nLa ROM in cache verrà rimossa, ma salvataggi, save state e screenshot resteranno disponibili.')) return;
+    const manager=window.Gaemboy3DSCacheLibrary;
+    if(manager?.enabled) {
+      try {
+        if(!(await manager.remove(g.path))){setMessage('Non è possibile eliminare una ROM durante il suo utilizzo o la copia.','error');return;}
+        openActionKey='';displayedSnapshot=null;refresh();
+        setMessage('Gioco rimosso dalla libreria; salvataggi e screenshot conservati.','success');
+      } catch(err) {setMessage('Rimozione non riuscita: '+err.message,'error');}
+      return;
+    }
     hiddenGames.add(key(g));
     await writeDB(PREF_STORE,'hidden-games',[...hiddenGames]);
     openActionKey='';displayedSnapshot=null;renderCards();
@@ -377,15 +386,16 @@
   }
   function renderFolder() {
     if(!root)return;
-    const label=folderName || (games.length?'Cartella giochi salvata':'Nessuna cartella selezionata');
-    root.querySelector('#gb3-folder-name').textContent=label;
-    root.querySelector('#gb3-folder-sub').textContent=folderName?'I file rimangono sul tuo dispositivo':'Seleziona una cartella contenente giochi 3DS';
-    root.querySelector('#gb3-select').textContent=(folderName || chosen || games.length)?'Cambia cartella':'Scegli cartella';
-    const enabled=!!(chosen||folderName||games.length);
-    const update = root.querySelector('#gb3-scan');
-    // This is only a secondary action when a library already exists: never a second step.
-    update.hidden = !enabled || (!games.length && !didImport);
-    update.disabled = scanActive;
+    const state=window.Gaemboy3DSCacheLibrary?.status();
+    if(!window.Gaemboy3DSCacheLibrary?.enabled)return;
+    const used=state?.used||0, limit=state?.limit||2*1024**3;
+    const size=n=>n>=1024**3?(n/1024**3).toFixed(2)+' GB':Math.round(n/1024**2)+' MB';
+    root.querySelector('#gb3-folder-name').textContent=games.length+' giochi nella tua libreria';
+    root.querySelector('#gb3-folder-sub').textContent=state?.supported===false
+      ? 'Memoria locale non disponibile: le ROM si potranno comunque aprire.'
+      : `Cache locale ${size(used)} / ${size(limit)} · Salvataggi separati`;
+    root.querySelector('#gb3-select').textContent='+ Aggiungi gioco';
+    root.querySelector('#gb3-scan').hidden=true;
   }
   function getDecorativeTitle(title) {
     return (title.match(/[\p{L}\p{N}]+/gu)||[]).slice(0,2).map(w=>w[0]?.toUpperCase()).join('')||'3D';
@@ -446,7 +456,11 @@
     art.append(fallback,image);
     const info=document.createElement('div');info.className='mini-info';
     const title=document.createElement('span');title.className='mini-name';title.title=g.title;title.textContent=g.title;
-    info.append(title);face.append(fill,wash,veil,art,info);
+    info.append(title);
+    if(g.element?.closest('li')?.dataset.cached==='false'){
+      const hint=document.createElement('small');hint.className='gb3-cache-hint';hint.textContent='Da reimportare';info.append(hint);
+    }
+    face.append(fill,wash,veil,art,info);
     face.addEventListener('click',ev=>{
       if(card.dataset.swipeBlocked==='1'){ev.preventDefault();return;}
       if(card.classList.contains('open')){setActions(g,card,false);return;}
@@ -480,7 +494,7 @@
     if(!root || root.hidden)return;
     const visibleGames=games.filter(g=>!hiddenGames.has(key(g)));
     const found=visibleGames.filter(g=>g.title.toLocaleLowerCase('it').includes(filter));
-    const sig=found.map(g=>key(g)+'|'+g.title+'|'+(blobUrls.get(key(g))||artworks.get(key(g))||matchCover(g)||g.img)+'|'+openActionKey).join('\n')+'|hidden:'+hiddenGames.size;
+    const sig=found.map(g=>key(g)+'|'+g.title+'|'+(blobUrls.get(key(g))||artworks.get(key(g))||matchCover(g)||g.img)+'|'+g.element?.closest('li')?.dataset.cached+'|'+openActionKey).join('\n')+'|hidden:'+hiddenGames.size;
     if(sig===displayedSnapshot)return;
     displayedSnapshot=sig;
     const grid=root.querySelector('#gb3-grid');
@@ -499,10 +513,10 @@
   function refresh() {
     if(!root || launchPending)return;
     const native=readGames();
-    if(native.length){
+    if(window.Gaemboy3DSCacheLibrary?.enabled || native.length){
       const next=gb3MergeNativeGames(native);
-      const nextKey=next.map(g=>key(g)+'|'+g.title).join('\n');
-      const oldKey=games.map(g=>key(g)+'|'+g.title).join('\n');
+      const nextKey=next.map(g=>key(g)+'|'+g.title+'|'+g.element?.closest('li')?.dataset.cached).join('\n');
+      const oldKey=games.map(g=>key(g)+'|'+g.title+'|'+g.element?.closest('li')?.dataset.cached).join('\n');
       if(nextKey!==oldKey||games.some(g=>!g.element?.isConnected)){
         games=next;displayedSnapshot=null;gb3SaveSnapshotSoon();
       }
@@ -520,15 +534,11 @@
     autoScanTimer=setTimeout(() => importGames(true), 350);
   }
   function chooseFolder() {
-    const btn=originalButton(/^(?:scegli|cambia|seleziona)\s+cartella(?:\s+giochi)?/i);
-    if(!btn){setMessage('Selettore cartella non disponibile in questa versione.','error');return;}
-    selectionPending=true;
-    clearTimeout(autoScanTimer);
-    try { btn.click();setMessage('Conferma la cartella nel browser: i giochi verranno cercati automaticamente.'); }
-    catch(e) { selectionPending=false;setMessage('Impossibile aprire il selettore: '+e.message,'error'); }
+    // The native file input retains the user gesture. No folder permission is requested.
+    openSingleGame();
   }
   function openSingleGame() {
-    const btn=originalButton(/^apri\s+rom/i);
+    const btn=document.querySelector('#pick') || originalButton(/^apri\s+rom/i);
     if(!btn){setMessage('Apertura file singolo non disponibile in questa versione.','error');return;}
     launchPending=true;
     root.hidden=true;
@@ -582,21 +592,21 @@
       <div class="gb3-shell">
         <header class="gb3-header"><div class="gb3-brand"><img src="home-v5-assets/logo.png" alt="" width="48" height="48"><div class="gb3-brand-name"><strong>GAEMBOY</strong><span>3DS LIBRARY</span></div></div><span class="gb3-header-note">La tua console, i tuoi giochi</span></header>
         <div class="gb3-scroller" id="gb3-scroller">
-        <section class="gb3-config" aria-label="Configurazione cartella">
-          <div class="gb3-config-copy"><div class="gb3-config-icon">${icons.folder}</div><div><div class="gb3-eyebrow">CARTELLA GIOCHI</div><strong id="gb3-folder-name">Nessuna cartella selezionata</strong><p id="gb3-folder-sub">Seleziona una cartella contenente giochi 3DS</p></div></div>
-          <div class="gb3-config-buttons"><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-main">Scegli cartella</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-soft" hidden>${icons.refresh} Aggiorna libreria</button></div>
+        <section class="gb3-config" aria-label="Gestione libreria">
+          <div class="gb3-config-copy"><div class="gb3-config-icon">${icons.folder}</div><div><div class="gb3-eyebrow">LIBRERIA LOCALE</div><strong id="gb3-folder-name">Nessun gioco importato</strong><p id="gb3-folder-sub">ROM salvate automaticamente, senza caricarle online</p></div></div>
+          <div class="gb3-config-buttons"><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-main">+ Aggiungi gioco</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-soft" hidden>${icons.refresh} Aggiorna libreria</button></div>
         </section>
         <div id="gb3-status" class="gb3-status" role="status" aria-live="polite" hidden></div>
         <section class="gb3-content" aria-label="Giochi Nintendo 3DS">
-          <div class="gb3-titlebar"><div><div class="gb3-eyebrow">LA TUA COLLEZIONE</div><h1>La tua libreria <span id="gb3-count">0</span></h1><p>I giochi rimangono sul tuo dispositivo, senza upload.</p></div><div class="gb3-tools"><button id="gb3-cover-toggle" class="gb3-cover-toggle" type="button" aria-pressed="true" hidden>Copertine online · On</button><label class="gb3-search" id="gb3-search" hidden>${icons.search}<input type="search" id="gb3-filter" placeholder="Cerca un gioco…" autocomplete="off" aria-label="Cerca un gioco"></label></div></div>
+          <div class="gb3-titlebar"><div><div class="gb3-eyebrow">LA TUA COLLEZIONE</div><h1>La tua libreria <span id="gb3-count">0</span></h1><p>Le tue ROM e i salvataggi rimangono sul dispositivo.</p></div><div class="gb3-tools"><button id="gb3-cover-toggle" class="gb3-cover-toggle" type="button" aria-pressed="true" hidden>Copertine online · On</button><label class="gb3-search" id="gb3-search" hidden>${icons.search}<input type="search" id="gb3-filter" placeholder="Cerca un gioco…" autocomplete="off" aria-label="Cerca un gioco"></label></div></div>
           <div class="gb3-grid" id="gb3-grid" hidden></div>
           <div class="gb3-nomatch" id="gb3-nomatch" hidden>Nessun gioco corrisponde alla ricerca.</div>
           <div class="gb3-empty" id="gb3-empty">
             <div class="gb3-empty-icon">${icons.folder}</div><h2 id="gb3-empty-title">Nessun gioco importato</h2>
-            <p>Per giocare al 3DS non è necessario caricare ROM di grandi dimensioni nel browser. Scegli una cartella del dispositivo che contenga i giochi: verranno elencati senza duplicare i file.</p>
-            <div class="gb3-empty-cta"><button id="gb3-select-empty" type="button" class="gb3-button gb3-button-main">${icons.folder} Scegli cartella</button></div>
-            <button class="gb3-single" id="gb3-single" type="button">Vuoi giocare senza creare una libreria? Apri un singolo file 3DS</button>
-            <div class="gb3-steps"><span><b>1</b> Scegli cartella: ricerca automatica</span><span><b>2</b> Gioca</span></div>
+            <p>Aggiungi una ROM per iniziare: Gaemboy la conserva automaticamente finché c’è spazio. I salvataggi rimangono anche se una ROM viene rimossa dalla cache.</p>
+            <div class="gb3-empty-cta"><button id="gb3-select-empty" type="button" class="gb3-button gb3-button-main">${icons.folder} + Aggiungi gioco</button></div>
+            <button class="gb3-single" id="gb3-single" type="button" hidden>Aggiungi un altro gioco</button>
+            <div class="gb3-steps"><span><b>1</b> Aggiungi la tua ROM</span><span><b>2</b> Gioca, Gaemboy salva una copia locale</span></div>
           </div>
         </section>
         <footer class="gb3-footer"><span>GAEMBOY 3DS · Basato su Azahar · Non affiliato a Nintendo</span><span><a href="https://github.com/libretro-thumbnails/Nintendo_-_Nintendo_3DS" target="_blank" rel="noopener noreferrer">Copertine: Libretro</a> · <a href="${SOURCE}" target="_blank" rel="noopener noreferrer">Sorgenti GPLv3+</a></span></footer>
@@ -617,6 +627,8 @@
     root.querySelector('#gb3-select-empty').addEventListener('click',chooseFolder);
     root.querySelector('#gb3-scan').addEventListener('click',()=>importGames(false));
     root.querySelector('#gb3-single').addEventListener('click',openSingleGame);
+    window.addEventListener('gaemboy3ds:library-updated',scheduleRender);
+    window.addEventListener('gaemboy3ds:cache-usage',scheduleRender);
     root.querySelector('#gb3-restore-games').addEventListener('click',()=>void restoreRemoved());
     root.querySelector('#gb3-edit-modal').addEventListener('click',ev=>{if(ev.target.id==='gb3-edit-modal')ev.currentTarget.hidden=true;});
     root.querySelector('#gb3-cover-toggle').addEventListener('click',()=>{
@@ -710,7 +722,7 @@
     }
     if(!folderName&&typeof saved.folderName==='string')folderName=saved.folderName;
     const native=readGames();
-    if(!native.length&&!games.length){games=[...gb3KnownGames.values()];}
+    if(!native.length&&!games.length && !window.Gaemboy3DSCacheLibrary?.enabled){games=[...gb3KnownGames.values()];}
     else if(native.length){games=native.map(g=>{
       const old=gb3KnownGames.get(key(g));
       return old?{...g,verifiedCover:old.verifiedCover||''}:g;
@@ -903,6 +915,9 @@
   });
 
   async function gb3ReadGameFile(g) {
+    if(window.Gaemboy3DSCacheLibrary?.enabled) {
+      try {return await window.Gaemboy3DSCacheLibrary.fileForCover(g.path);} catch(_) {return null;}
+    }
     const wanted = String(g.path || g.fileName || '').replace(/\\/g, '/');
     const name = String(g.fileName || wanted.split('/').pop() || '').split('/').pop();
     if (!name) return null;

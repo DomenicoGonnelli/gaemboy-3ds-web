@@ -9,8 +9,9 @@ const OFF = {
   audioWrite: 348, audioRead: 352, audioDropped: 356,
 };
 import {
-  forgetRootHandle, gamesFromFileList, loadRootHandle, metadataOf, openGame, saveRootHandle, scanDirectoryHandle,
-} from './gaemboy3ds-library.js?v=26';
+  validRom, registerRom, romFingerprint, listCatalog, putCatalogGame, deleteCatalogGame,
+  cachedFile, cacheUsage, cacheRom, removeCachedRom, ROM_LIMIT,
+} from './gaemboy3ds-cache.js?v=27';
 import { bindTouchControls } from './gaemboy3ds-touch.js?v=26';
 
 const STATE_SIZE = 360;
@@ -247,14 +248,14 @@ function initAudio() {
 }
 
 // ---------------------------------------------------------------- boot
-function boot(file) {
+function boot(file, managedCache = false) {
   if (worker) return;
   for (const id of ['demo', 'demo3d']) $(id).disabled = true;
   $('pick').disabled = true;
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=26', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=27', { type: 'module' });
   $('selection-view').hidden = $('selection-footer').hidden = true;
   $('game-view').hidden = false;
   document.body.classList.add('playing');
@@ -356,10 +357,10 @@ function boot(file) {
   // Ask to keep site storage (saves and the local ROM copy) from being evicted under pressure.
   navigator.storage?.persist?.().catch(() => {});
   if (offscreen) {
-    worker.postMessage({ type: 'boot', file, extraArgs, canvas: offscreen }, [offscreen]);
+    worker.postMessage({ type: 'boot', file, extraArgs, managedCache, canvas: offscreen }, [offscreen]);
   } else {
     if (!extraArgs.includes('--sw')) extraArgs.push('--sw');
-    worker.postMessage({ type: 'boot', file, extraArgs });
+    worker.postMessage({ type: 'boot', file, extraArgs, managedCache });
   }
 }
 
@@ -441,7 +442,7 @@ function updateStats() {
   const speed = (100 * fps) / NATIVE_FPS;
   const buffered = (readI('audioWrite') - readI('audioRead')) >>> 0;
   $('s-status').textContent = STATUS[status] ?? status;
-  $('game-status').textContent = status === 2 ? (romCopyPct != null && romCopyPct < 100 ? `Prima partita: copia locale del gioco ${romCopyPct}%` : '') : status === 3 ? 'Errore: apri il Menu per cambiare gioco.' : 'Caricamento…';
+  $('game-status').textContent = status === 2 ? ((managedCachePct ?? romCopyPct) != null && (managedCachePct ?? romCopyPct) < 100 ? `Prima partita: copia locale del gioco ${managedCachePct ?? romCopyPct}%` : '') : status === 3 ? 'Errore: apri il Menu per cambiare gioco.' : 'Caricamento…';
   $('s-renderer').textContent = ctx ? 'Software (CPU)' : 'WebGL2 (GPU)';
   $('s-status').className = status === 2 ? 'good' : status === 3 ? 'bad' : 'mid';
   $('s-load').textContent = readF('loadMs') ? `${readF('loadMs').toFixed(0)} ms` : '—';
@@ -537,214 +538,225 @@ function downloadLog() {
 }
 $('dl-log').onclick = downloadLog;
 
-// ---------------------------------------------------------------- local game library
-// Chromium keeps a FileSystemDirectoryHandle (permission may be asked again after a reload);
-// Safari/Firefox use <input webkitdirectory>, whose files must be selected again on each visit.
-const LIB_META_KEY = 'gb3ds-library-meta';
-const LIB_LAST_KEY = 'gb3ds-library-last';
-const hasDirectoryPicker = typeof window.showDirectoryPicker === 'function';
-let library = null; // { folderName, games, truncated, live }
-let rootHandle = null;
-let pendingGamePath = null; // game to launch once the folder is selected again (Safari/Firefox)
+// ---------------------------------------------------------------- simple, persistent ROM library
+// Only the catalog and ROM cache live in browser storage. IDBFS saves are never evicted.
+const libGames = new Map();
+const sessionFiles = new Map();
+let activeGameKey = null;
+let pendingImportKey = null;
+let cacheBusy = false;
+let managedCachePct = null;
+let importQueue = Promise.resolve();
+const libState = { ready: false, used: 0, limit: ROM_LIMIT, status: '' };
 
-function libStatus(text, error = false) {
-  $('lib-status').textContent = text;
+function libStatus(message, error = false) {
+  libState.status = message;
+  $('lib-status').textContent = message;
   $('lib-status').className = error ? 'bad' : '';
+  dispatchEvent(new CustomEvent('gaemboy3ds:library-updated', { detail: { ...libState } }));
 }
-
 function formatSize(bytes) {
-  return bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(2)} GB` : `${(bytes / 1048576).toFixed(1)} MB`;
+  return bytes >= 1073741824 ? `${(bytes / 1073741824).toFixed(2)} GB` : `${(bytes / 1048576).toFixed(0)} MB`;
 }
-
+const gamePath = g => `${g.key.slice(0, 12)}/${g.name}`;
+async function updateSpace() {
+  try {
+    const usage = await cacheUsage();
+    libState.used = usage.used;
+    libState.supported = usage.supported;
+  } catch (error) {
+    libState.supported = false;
+    log('[cache] Impossibile leggere lo spazio: ' + (error.message || error));
+  }
+  dispatchEvent(new CustomEvent('gaemboy3ds:cache-usage', { detail: { ...libState } }));
+}
 function renderLibrary() {
   const list = $('lib-list');
   list.replaceChildren();
-  $('library').hidden = !library && !rootHandle;
-  $('lib-forget').disabled = !library && !rootHandle;
-  $('lib-refresh').disabled = !library && !rootHandle;
-  if (!library) return;
-  $('lib-filter').hidden = library.games.length < 8;
+  $('library').hidden = false;
+  $('lib-forget').hidden = true;
+  $('lib-refresh').hidden = true;
+  $('lib-filter').hidden = libGames.size < 8;
   const query = $('lib-filter').value.trim().toLowerCase();
-  const last = localStorage.getItem(LIB_LAST_KEY);
-  for (const game of library.games) {
-    if (query && !game.path.toLowerCase().includes(query)) continue;
+  for (const game of [...libGames.values()].sort((a, b) => (b.lastPlayed || 0) - (a.lastPlayed || 0))) {
+    if (query && !game.name.toLowerCase().includes(query)) continue;
     const item = document.createElement('li');
+    item.dataset.gamePath = gamePath(game);
+    item.dataset.gameTitle = game.name.replace(/\.(3ds|cci|cxi|app|3dsx|elf)$/i, '').replace(/[._]/g,' ');
+    item.dataset.cached = game.cached ? 'true' : 'false';
     const play = document.createElement('button');
     play.type = 'button';
-    play.textContent = 'Gioca';
+    play.textContent = 'Gioca'; // The existing home adapter recognizes this action.
+    play.title = game.cached || sessionFiles.has(game.key) ? 'Gioca' : 'Reimporta la ROM per giocare';
     play.disabled = !!worker;
-    if (!library.live) play.title = hasDirectoryPicker
-      ? 'Chiede di nuovo il permesso di lettura e avvia il gioco'
-      : 'Apre la scelta della cartella: conferma la stessa cartella e il gioco parte';
-    play.onclick = () => (library.live ? launchGame(game) : reconnectAndLaunch(game));
-    const label = document.createElement('span');
-    label.className = 'game';
-    label.textContent = game.path + (game.path === last ? '  · ultimo avviato' : '');
-    const meta = document.createElement('span');
-    meta.className = 'meta';
-    meta.textContent = formatSize(game.size);
-    item.append(play, label, meta);
-    list.append(item);
+    play.onclick = () => void launchLibraryGame(game.key);
+    const label = document.createElement('span'); label.className = 'game'; label.textContent = game.name;
+    const meta = document.createElement('span'); meta.className = 'meta';
+    meta.textContent = `${formatSize(game.size)} · ${game.cached ? 'Disponibile' : 'Da reimportare'}`;
+    item.append(play, label, meta); list.append(item);
   }
+  dispatchEvent(new CustomEvent('gaemboy3ds:library-updated', { detail: { ...libState } }));
 }
 
-function showLibrary(result, live) {
-  library = { ...result, live };
-  const count = result.games.length;
-  const where = result.folderName ? `«${result.folderName}»` : 'la cartella';
-  let text = count ? `${count} ${count === 1 ? 'gioco' : 'giochi'} in ${where}.` : `Nessun gioco 3DS trovato in ${where}.`;
-  if (result.truncated) text += ' Elenco limitato ai primi 2000 file.';
-  if (!live) {
-    text += hasDirectoryPicker
-      ? ' Premi «Riconnetti cartella» per leggerla di nuovo.'
-      : ' Premi «Gioca» e conferma la stessa cartella.';
-  }
-  libStatus(text);
+async function restoreCacheCatalog() {
   try {
-    localStorage.setItem(LIB_META_KEY, JSON.stringify(metadataOf(result)));
-  } catch { /* metadata only: the library still works for this session */ }
-  renderLibrary();
-}
-
-async function scanRoot(requestAccess) {
-  if (!rootHandle) return;
-  let permission = await rootHandle.queryPermission({ mode: 'read' });
-  if (permission !== 'granted' && requestAccess) permission = await rootHandle.requestPermission({ mode: 'read' });
-  if (permission !== 'granted') {
-    $('lib-refresh').textContent = 'Riconnetti cartella';
-    const saved = readSavedMetadata();
-    if (saved) showLibrary(saved, false);
-    else libStatus(`Cartella «${rootHandle.name}» memorizzata: premi «Riconnetti cartella» per leggerla.`);
+    const saved = await listCatalog();
+    for (const game of saved) {
+      // A partially-written mirror must never be presented as a playable ROM.
+      let cached = false;
+      try { cached = Boolean(await cachedFile(game)); }
+      catch (error) { log('[cache] Lettura ' + game.name + ': ' + error.message); }
+      libGames.set(game.key, { ...game, cached });
+    }
+    libState.ready = true;
     renderLibrary();
-    return;
-  }
-  $('lib-refresh').textContent = 'Aggiorna';
-  libStatus('Lettura della cartella…');
-  showLibrary(await scanDirectoryHandle(rootHandle), true);
+    await updateSpace();
+    libStatus(saved.length ? `${saved.length} giochi nella libreria.` : 'Premi + Aggiungi gioco per iniziare.');
+  } catch (error) { libStatus(`Libreria locale non disponibile: ${error.message}`, true); }
 }
 
-function readSavedMetadata() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(LIB_META_KEY) || 'null');
-    return saved && Array.isArray(saved.games) ? saved : null;
-  } catch {
-    return null;
-  }
-}
-
-// Browsers cannot reopen a folder without a user gesture, nor preselect its path in the dialog;
-// the click on «Gioca» provides the gesture, and macOS usually opens the last used folder.
-async function reconnectAndLaunch(game) {
+async function launchLibraryGame(key) {
   if (worker) return;
-  ensureAudio();
-  if (!hasDirectoryPicker) {
-    pendingGamePath = game.path;
-    libStatus(`Conferma la cartella «${library.folderName || 'dei giochi'}» per avviare «${game.name}».`);
-    $('lib-dir').value = '';
-    $('lib-dir').click();
-    return;
+  const game = libGames.get(key);
+  if (!game) return;
+  let file = sessionFiles.get(key) || null;
+  if (!file) {
+    try { file = await cachedFile(game); }
+    catch (error) { log(`[cache] ${error.message}`); }
   }
-  if (!rootHandle) {
-    await pickFolder();
-  } else {
-    try {
-      await scanRoot(true);
-    } catch (err) {
-      libStatus(`Impossibile leggere la cartella: ${err.message}`, true);
-      return;
-    }
-  }
-  if (library?.live) launchFromLibrary(game.path, game.size);
-}
-
-function launchFromLibrary(path, size) {
-  const candidates = library.games.filter((g) => g.path === path);
-  const game = candidates.find((g) => g.size === size) || candidates[0];
-  if (game) launchGame(game);
-  else libStatus(`«${path}» non è presente nella cartella selezionata: scegli il gioco dall'elenco aggiornato.`, true);
-}
-
-async function pickFolder() {
-  pendingGamePath = null;
-  if (!hasDirectoryPicker) {
-    $('lib-dir').value = '';
-    $('lib-dir').click();
+  if (!file) {
+    pendingImportKey = key;
+    libStatus(`Seleziona di nuovo «${game.name}»: i salvataggi sono conservati.`);
+    $('file').multiple = false;
+    $('file').value = '';
+    $('file').click();
     return;
   }
   try {
-    const handle = await window.showDirectoryPicker({ id: 'gb3ds-games', mode: 'read' });
-    rootHandle = handle;
+    await ensureAudio();
+    game.lastPlayed = Date.now();
+    await putCatalogGame({ key: game.key, name: game.name, size: game.size,
+      lastModified: game.lastModified, addedAt: game.addedAt, lastPlayed: game.lastPlayed });
+    activeGameKey = key;
+    boot(file, true); // Prevent the original worker copier from creating a duplicate mirror.
+    if (sessionFiles.has(key) && !game.cached) queueCache(file, game);
+  } catch (error) { libStatus(`Impossibile avviare «${game.name}»: ${error.message}`, true); }
+}
+
+function queueCache(file, game) {
+  importQueue = importQueue.then(async () => {
+    cacheBusy = true;
     try {
-      await saveRootHandle(handle);
-    } catch (err) {
-      libStatus(`La cartella non potrà essere ricordata dopo il ricaricamento: ${err.message}`, true);
+      libStatus(`Ottimizzazione spazio di «${game.name}» in corso…`);
+      const result = await cacheRom(file, game, {
+        activeKeys: new Set(activeGameKey ? [activeGameKey] : []),
+        confirmEviction: async (evict) => {
+          // First eviction is explained; future evictions are automatic once accepted.
+          if (localStorage.getItem('gb3-cache-auto-evict') === '1') return true;
+          const bytes = evict.reduce((n, x) => n + x.bytes, 0);
+          const agreed = confirm(`Per conservare questo gioco, Gaemboy libererà ${formatSize(bytes)} di cache delle ROM meno usate.\n\nLe card e tutti i salvataggi restano disponibili.\n\nProcedere? (La prossima volta sarà automatico)`);
+          if (agreed) localStorage.setItem('gb3-cache-auto-evict', '1');
+          return agreed;
+        },
+        onProgress: fraction => {
+          managedCachePct = Math.floor(fraction * 100);
+          libStatus(`Memorizzazione «${game.name}»: ${Math.floor(fraction * 100)}% (puoi già giocare)`);
+        },
+      });
+      if (result.cached) {
+        game.cached = true;
+        sessionFiles.delete(game.key);
+        libStatus(`«${game.name}» pronto per le prossime partite.`, false);
+      } else if (result.reason === 'oversize') {
+        libStatus(`«${game.name}» supera 2 GB: puoi giocare, ma andrà reimportato.`, false);
+      } else {
+        libStatus(`«${game.name}» avviabile: copia locale non disponibile (${result.reason}).`, false);
+      }
+    } catch (error) {
+      libStatus(`Copia ROM non riuscita; puoi continuare a giocare: ${error.message}`, true);
+    } finally {
+      cacheBusy = false;
+      managedCachePct = null;
+      await updateCacheFlags();
     }
-    await scanRoot(true);
-  } catch (err) {
-    if (err.name !== 'AbortError') libStatus(`Impossibile leggere la cartella: ${err.message}`, true);
-  }
+  }).catch(error => { log('[cache] ' + error); });
 }
 
-async function launchGame(game) {
-  if (worker) return;
-  ensureAudio();
-  try {
-    const file = await openGame(game);
-    localStorage.setItem(LIB_LAST_KEY, game.path);
-    boot(file);
-  } catch (err) {
-    const missing = err.name === 'NotFoundError' || err.name === 'NotReadableError';
-    libStatus(missing
-      ? `«${game.path}» non è più leggibile (spostato, rinominato o modificato): premi «${$('lib-refresh').textContent}».`
-      : `Impossibile aprire «${game.path}»: ${err.message}`, true);
+async function updateCacheFlags() {
+  for (const game of libGames.values()) {
+    try { game.cached = Boolean(await cachedFile(game)); }
+    catch { game.cached = false; }
   }
-}
-
-$('lib-pick').onclick = pickFolder;
-$('lib-dir').onchange = (e) => {
-  const pending = pendingGamePath;
-  pendingGamePath = null;
-  if (!e.target.files.length) return;
-  const previous = library?.games.find((g) => g.path === pending);
-  $('lib-refresh').textContent = 'Aggiorna';
-  showLibrary(gamesFromFileList(e.target.files), true);
-  if (pending) launchFromLibrary(pending, previous?.size);
-};
-$('lib-dir').addEventListener('cancel', () => { pendingGamePath = null; });
-$('lib-refresh').onclick = () => {
-  if (rootHandle) scanRoot(true).catch((err) => libStatus(`Impossibile leggere la cartella: ${err.message}`, true));
-  else pickFolder();
-};
-$('lib-forget').onclick = async () => {
-  try {
-    await forgetRootHandle();
-  } catch { /* nothing stored */ }
-  localStorage.removeItem(LIB_META_KEY);
-  localStorage.removeItem(LIB_LAST_KEY);
-  rootHandle = null;
-  library = null;
-  $('lib-dir').value = '';
-  $('lib-refresh').textContent = 'Aggiorna';
-  $('lib-filter').hidden = true;
-  libStatus('Cartella dimenticata. I salvataggi nel browser non sono stati toccati.');
   renderLibrary();
-};
-$('lib-filter').oninput = renderLibrary;
+  await updateSpace();
+}
 
-(async function restoreLibrary() {
-  if (!hasDirectoryPicker) {
-    $('lib-refresh').textContent = 'Riseleziona cartella';
-    const saved = readSavedMetadata();
-    if (saved) showLibrary(saved, false);
-    return;
+async function importFiles(files, requestedKey = null) {
+  const valid = Array.from(files || []).filter(validRom);
+  if (!valid.length) { libStatus('Seleziona una ROM 3DS valida.', true); return; }
+  if (requestedKey && valid.length !== 1) { libStatus('Seleziona soltanto la ROM richiesta.', true); return; }
+  let firstKey = null;
+  for (const file of valid) {
+    try {
+      const id = await romFingerprint(file);
+      if (requestedKey && requestedKey !== id) {
+        libStatus('Questa è una ROM differente. Seleziona lo stesso file per recuperare la partita.', true);
+        return;
+      }
+      const game = await registerRom(file);
+      game.cached = Boolean(await cachedFile(game));
+      libGames.set(game.key, game);
+      sessionFiles.set(game.key, file);
+      if (!firstKey) {
+        firstKey = game.key;
+        renderLibrary();
+        // First game starts before the rest of a multi-file selection is catalogued.
+        await launchLibraryGame(firstKey);
+      } else if (!game.cached) {
+        queueCache(file, game);
+      }
+    } catch (error) { libStatus(`Impossibile importare «${file.name}»: ${error.message}`, true); }
   }
-  try {
-    rootHandle = (await loadRootHandle()) || null;
-    await scanRoot(false);
-  } catch (err) {
-    libStatus(`Impossibile ripristinare la cartella: ${err.message}`, true);
-  }
-})();
+  renderLibrary();
+}
+
+$('lib-filter').oninput = renderLibrary;
+$('pick').onclick = () => {
+  pendingImportKey = null;
+  $('file').multiple = true;
+  $('file').value = '';
+  $('file').click();
+};
+$('file').accept = '.3ds,.cci,.cxi,.app,.3dsx,.elf';
+$('file').onchange = e => {
+  const pending = pendingImportKey;
+  pendingImportKey = null;
+  void importFiles(e.target.files, pending);
+};
+$('file').addEventListener('cancel', () => { pendingImportKey = null; });
+addEventListener('dragover', e => e.preventDefault());
+addEventListener('drop', e => { e.preventDefault(); if (!worker) void importFiles(e.dataTransfer?.files); });
+
+window.Gaemboy3DSCacheLibrary = {
+  enabled: true,
+  status: () => ({ ...libState, games: libGames.size, copying: cacheBusy }),
+  add: () => $('pick').click(),
+  fileForCover: async path => {
+    const game = [...libGames.values()].find(g => gamePath(g) === path);
+    return game ? (sessionFiles.get(game.key) || await cachedFile(game)) : null;
+  },
+  remove: async path => {
+    const game = [...libGames.values()].find(g => gamePath(g) === path);
+    if (!game || game.key === activeGameKey || cacheBusy) return false;
+    await removeCachedRom(game.key);
+    await deleteCatalogGame(game.key);
+    libGames.delete(game.key); sessionFiles.delete(game.key);
+    await updateCacheFlags();
+    return true;
+  },
+  refresh: updateCacheFlags,
+};
+void restoreCacheCatalog();
 
 // ---------------------------------------------------------------- UI
 async function startDemo(name) {
@@ -770,21 +782,6 @@ for (const id of ['demo', 'demo3d']) {
     .then((r) => { if (!r.ok) hide(); })
     .catch(hide);
 }
-$('pick').onclick = () => $('file').click();
-$('file').onchange = (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
-  ensureAudio();
-  boot(file);
-};
-addEventListener('dragover', (e) => e.preventDefault());
-addEventListener('drop', (e) => {
-  e.preventDefault();
-  const file = e.dataTransfer?.files?.[0];
-  if (!file || worker) return;
-  ensureAudio();
-  boot(file);
-});
 $('throttle').onclick = () => {
   const next = readI('throttle') ? 0 : 1;
   writeI('throttle', next);
@@ -823,10 +820,32 @@ $('back-library').onclick = async () => {
 };
 
 $('state-slot').onchange = refreshFeatureControls;
-$('state-save').onclick = () => {
-  const slot = slots.find((item) => item.slot === Number($('state-slot').value));
+async function savePreview() {
+  try {
+    // Software renderer: take a small snapshot of the canvas.
+    if (ctx) return await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+    // WebGL OffscreenCanvas was transferred to the worker; a CPU framebuffer is only
+    // present for some renderers, so this fallback is intentionally best effort.
+    if (!memory || !base) return null;
+    const w = readI('fbWidth'), h = readI('fbHeight'), ptr = readI('fbPtr');
+    if (w < 1 || h < 1 || w * h > 4096 * 4096 || ptr < 1 || ptr + w * h * 4 > memory.buffer.byteLength) return null;
+    const data = new Uint8ClampedArray(memory.buffer, ptr, w * h * 4).slice();
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    c.getContext('2d').putImageData(new ImageData(data, w, h), 0, 0);
+    return await new Promise(resolve => c.toBlob(resolve, 'image/png'));
+  } catch { return null; }
+}
+$('state-save').onclick = async () => {
+  const slot = slots.find(item => item.slot === Number($('state-slot').value));
   if (slot?.exists && !confirm(`Sovrascrivere lo stato nello slot ${slot.slot}?`)) return;
-  performFeature('save-state', { slot: Number($('state-slot').value) }, 'Stato salvato nel browser.');
+  const result = await performFeature('save-state', { slot: Number($('state-slot').value) }, 'Stato salvato nel browser.');
+  if (!result || !activeGameKey) return;
+  const game = libGames.get(activeGameKey);
+  if (!game) return;
+  const screenshot = await savePreview();
+  dispatchEvent(new CustomEvent('gaemboy3ds:savestate-saved', { detail: {
+    gameKey: gamePath(game), savedAt: Date.now(), screenshot,
+  } }));
 };
 $('state-load').onclick = () => {
   performFeature('load-state', { slot: Number($('state-slot').value) }, 'Stato caricato.');
