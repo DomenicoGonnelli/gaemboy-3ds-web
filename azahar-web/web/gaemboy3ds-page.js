@@ -11,7 +11,7 @@ const OFF = {
 import {
   validRom, registerRom, romFingerprint, listCatalog, putCatalogGame, deleteCatalogGame,
   cachedFile, cacheUsage, cacheRom, removeCachedRom, prefersSequentialCache, ROM_LIMIT,
-} from './gaemboy3ds-cache.js?v=32';
+} from './gaemboy3ds-cache.js?v=08';
 import { allowedCacheGb, verifyGaemboyGrant, GIB } from './gaemboy3ds-entitlement.js?v=1';
 import { GAEMBOY_PREMIUM_PUBLIC_JWK } from './gaemboy3ds-premium-key.js?v=1';
 import { bindTouchControls } from './gaemboy3ds-touch.js?v=26';
@@ -261,7 +261,7 @@ function boot(file, managedCache = false) {
   $('selection-view').hidden = $('selection-footer').hidden = true;
   $('game-view').hidden = false;
   document.body.classList.add('playing');
-  dispatchEvent(new CustomEvent('gaemboy3ds:game-booting', { detail: { name: file.name } }));
+  dispatchEvent(new CustomEvent('gaemboy3ds:game-booting', { detail: { name: file.name, gameKey: activeGameKey, gamePath: activeGameKey ? (libGames.has(activeGameKey) ? gamePath(libGames.get(activeGameKey)) : '') : '' } }));
   $('game-title').textContent = file.name;
   $('notice').hidden = true;
   $('game-status').textContent = 'Caricamento…';
@@ -560,7 +560,7 @@ const interruptedCopy = getCachePreference(CACHE_PENDING_COPY);
 const previousCacheMessage = interruptedCopy
   ? `La copia di «${interruptedCopy}» è stata interrotta. Reimporta la ROM per riprenderla.`
   : getCachePreference(CACHE_LAST_ERROR);
-const libState = { ready: false, used: 0, limit: ROM_LIMIT, status: '', premium: false, maxGb: 3, selectedGb: 3, copying: false, copyProgress: null, cacheMessage: previousCacheMessage };
+const libState = { ready: false, used: 0, limit: ROM_LIMIT, status: '', premium: false, maxGb: 3, selectedGb: 3, copying: false, copyingKey: null, copyingName: '', copyProgress: null, cacheMessage: previousCacheMessage };
 function cacheNotice(message) {
   libState.cacheMessage = message;
   writeCachePreference(CACHE_LAST_ERROR, message);
@@ -653,15 +653,16 @@ function renderLibrary() {
     item.dataset.gamePath = gamePath(game);
     item.dataset.gameTitle = game.name.replace(/\.(3ds|cci|cxi|app|3dsx|elf)$/i, '').replace(/[._]/g,' ');
     item.dataset.cached = game.cached ? 'true' : 'false';
+    item.dataset.copying = libState.copying && libState.copyingKey === game.key ? 'true' : 'false';
     const play = document.createElement('button');
     play.type = 'button';
     play.textContent = 'Gioca'; // The existing home adapter recognizes this action.
-    play.title = game.cached || sessionFiles.has(game.key) ? 'Gioca' : 'Reimporta la ROM per giocare';
+    play.title = item.dataset.copying === 'true' ? 'Attendi la fine dell’importazione' : game.cached ? 'Gioca' : 'Importa nuovamente la ROM';
     play.disabled = !!worker;
     play.onclick = () => void launchLibraryGame(game.key);
     const label = document.createElement('span'); label.className = 'game'; label.textContent = game.name;
     const meta = document.createElement('span'); meta.className = 'meta';
-    meta.textContent = `${formatSize(game.size)} · ${game.cached ? 'Disponibile' : 'Da reimportare'}`;
+    meta.textContent = `${formatSize(game.size)} · ${item.dataset.copying === 'true' ? 'Importazione in corso' : game.cached ? 'Pronto per giocare' : 'Da reimportare'}`;
     item.append(play, label, meta); list.append(item);
   }
   dispatchEvent(new CustomEvent('gaemboy3ds:library-updated', { detail: { ...libState } }));
@@ -685,31 +686,43 @@ async function restoreCacheCatalog() {
   } catch (error) { libStatus(`Libreria locale non disponibile: ${error.message}`, true); }
 }
 
-async function launchLibraryGame(key, { skipCache = false } = {}) {
+function openRomPickerFor(game) {
+  // This path runs synchronously from the user's click so Safari can open Finder.
+  pendingImportKey = game.key;
+  const message = `La ROM di «${game.name}» non è disponibile nella memoria locale.\n\nImporta nuovamente lo stesso file per ripristinarla. I salvataggi resteranno disponibili.`;
+  window.alert(message);
+  libStatus(`Importa nuovamente «${game.name}». I salvataggi sono conservati.`);
+  $('file').multiple = false;
+  $('file').value = '';
+  $('file').click();
+  return 'needs-reimport';
+}
+async function launchLibraryGame(key) {
   if (worker) return 'already-playing';
   const game = libGames.get(key);
   if (!game) return 'missing-game';
-  let file = sessionFiles.get(key) || null;
-  if (!file) {
-    try { file = await cachedFile(game); }
-    catch (error) { log(`[cache] ${error.message}`); }
+  if (libState.copying && libState.copyingKey === key) {
+    libStatus(`Importazione di «${game.name}» in corso (${libState.copyProgress ?? 0}%). Attendi prima di avviare.`);
+    return 'importing';
   }
+  // Do not fall back to the picker File: it can be revoked after import, and
+  // doing so misleadingly marks an uncached ROM as playable after a refresh.
+  if (!game.cached) return openRomPickerFor(game);
+  let file = null;
+  try { file = await cachedFile(game); }
+  catch (error) { log(`[cache] Lettura ROM archiviata: ${error?.name || error?.message || error}`); }
   if (!file) {
-    pendingImportKey = key;
-    libStatus(`Seleziona di nuovo «${game.name}»: i salvataggi sono conservati.`);
-    $('file').multiple = false;
-    $('file').value = '';
-    $('file').click();
-    return 'needs-reimport';
+    game.cached = false;
+    renderLibrary();
+    return openRomPickerFor(game);
   }
   try {
     await ensureAudio();
+    activeGameKey = key;
+    boot(file, true); // Reuse verified cache; never create a second mirror.
     game.lastPlayed = Date.now();
     await putCatalogGame({ key: game.key, name: game.name, size: game.size,
       lastModified: game.lastModified, addedAt: game.addedAt, lastPlayed: game.lastPlayed });
-    activeGameKey = key;
-    boot(file, true); // Prevent the original worker copier from creating a duplicate mirror.
-    if (!skipCache && sessionFiles.has(key) && !game.cached) queueCache(file, game);
     return 'started';
   } catch (error) {
     libStatus(`Impossibile avviare «${game.name}»: ${error.message}`, true);
@@ -721,7 +734,11 @@ function queueCache(file, game) {
   importQueue = importQueue.then(async () => {
     cacheBusy = true;
     libState.copying = true;
+    libState.copyingKey = game.key;
+    libState.copyingName = game.name;
     libState.copyProgress = 0;
+    game.cached = false;
+    renderLibrary();
     cacheNotice('');
     writeCachePreference(CACHE_PENDING_COPY, game.name);
     try {
@@ -757,7 +774,7 @@ function queueCache(file, game) {
         },
       });
       if (result.cached) {
-        // Never discard the live File until the persisted copy can actually be
+        // Never report the ROM as ready until the persisted copy can actually be
         // reopened. On Safari the OPFS / IndexedDB backend may fail late.
         const stored = await cachedFile(game);
         if (!stored) throw new Error('La copia non è leggibile dopo la scrittura. Il file originale resta utilizzabile in questa sessione.');
@@ -768,8 +785,7 @@ function queueCache(file, game) {
         }
         cacheNotice('');
         game.cached = true;
-        sessionFiles.delete(game.key);
-        libStatus(`«${game.name}» pronto per le prossime partite.`, false);
+        libStatus(`«${game.name}» pronto per giocare: premi la sua copertina.`, false);
       } else if (result.reason === 'oversize') {
         libState.cacheMessage = `La ROM supera la cache da ${libState.selectedGb} GB. Il gioco funziona, ma andrà reimportato.`;
         libStatus(libState.cacheMessage, false);
@@ -798,7 +814,12 @@ function queueCache(file, game) {
       cacheBusy = false;
       writeCachePreference(CACHE_PENDING_COPY, '');
       libState.copying = false;
+      libState.copyingKey = null;
+      libState.copyingName = '';
       libState.copyProgress = null;
+      // The picker File is temporary; a game is playable after refresh ONLY
+      // if the independently verified persistent cache is available.
+      sessionFiles.delete(game.key);
       managedCachePct = null;
       await updateCacheFlags();
     }
@@ -819,35 +840,28 @@ async function importFiles(files, requestedKey = null) {
   const valid = Array.from(files || []).filter(validRom);
   if (!valid.length) { libStatus('Seleziona una ROM 3DS valida.', true); return; }
   if (requestedKey && valid.length !== 1) { libStatus('Seleziona soltanto la ROM richiesta.', true); return; }
-  let firstKey = null;
   for (const file of valid) {
     try {
       const id = await romFingerprint(file);
       if (requestedKey && requestedKey !== id) {
-        libStatus('Questa è una ROM differente. Seleziona lo stesso file per recuperare la partita.', true);
+        libStatus('La ROM selezionata è differente. Importa lo stesso file per mantenere i salvataggi.', true);
         return;
       }
-      const game = await registerRom(file);
+      const game = await registerRom(file, id);
       game.cached = Boolean(await cachedFile(game));
       libGames.set(game.key, game);
-      sessionFiles.set(game.key, file);
-      if (!firstKey) {
-        firstKey = game.key;
-        renderLibrary();
-        // Safari sometimes invalidates large picker Files while both the
-        // emulator and OPFS worker read them. Cache the first ROM BEFORE boot.
-        // Chrome/Edge retain immediate boot plus background copy.
-        if (prefersSequentialCache() && !game.cached) {
-          libStatus(`Preparazione di «${game.name}» nella memoria locale prima dell’avvio…`);
-          await queueCache(file, game);
-          await launchLibraryGame(firstKey, { skipCache: true });
-        } else {
-          await launchLibraryGame(firstKey);
-        }
-      } else if (!game.cached) {
-        queueCache(file, game);
+      // A card appears immediately. Import does NOT start the emulator.
+      renderLibrary();
+      if (!game.cached) {
+        sessionFiles.set(game.key, file);
+        await queueCache(file, game);
+      } else {
+        libStatus(`«${game.name}» già nella cache. Clicca la copertina per giocare.`);
       }
-    } catch (error) { libStatus(`Impossibile importare «${file.name}»: ${error.message}`, true); }
+    } catch (error) {
+      cacheNotice(`Importazione non riuscita: ${error?.name || 'Errore'} (${error?.message || error}).`);
+      libStatus(libState.cacheMessage, true);
+    }
   }
   renderLibrary();
 }

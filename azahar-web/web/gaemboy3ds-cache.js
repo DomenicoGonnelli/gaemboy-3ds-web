@@ -205,13 +205,13 @@ async function copyIdbChunks(file, game, onProgress) {
   return { cached: Boolean(await cachedIdbFile(game)), backend: 'indexeddb' };
 }
 
-export async function registerRom(file) {
+export async function registerRom(file, knownKey = null) {
   if (!validRom(file)) throw new Error('Seleziona una ROM 3DS valida (.3ds, .cci, .cxi, .app, .3dsx o .elf).');
-  const key = await romFingerprint(file);
+  const key = knownKey || await romFingerprint(file);
   const existing = await getCatalogGame(key);
   const entry = {
     key, name: existing?.name || file.name, size: file.size, lastModified: file.lastModified,
-    addedAt: existing?.addedAt || Date.now(), lastPlayed: Date.now(),
+    addedAt: existing?.addedAt || Date.now(), lastPlayed: existing?.lastPlayed || 0,
   };
   await putCatalogGame(entry);
   return entry;
@@ -307,7 +307,8 @@ async function transferCopy(file, game, onProgress) {
     };
     const failSource = error => {
       sourceFailure = { supported: true, cached: false, reason: 'source-unreadable',
-        error: String(error?.message || error), bytes: offset, total: file.size };
+        sourceError: error?.name || 'FileReadError', error: String(error?.message || error),
+        bytes: offset, total: file.size };
       // Let the worker close its OPFS access handle before the next reimport.
       try { worker.postMessage({ type: 'abort' }); }
       catch { finish(sourceFailure); return; }

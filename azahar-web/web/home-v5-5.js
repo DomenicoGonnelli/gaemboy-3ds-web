@@ -218,6 +218,16 @@
     const lastPlay = Number(played[key] || 0);
     if (lastPlay) when.append(makeElement('span','gb55-last-played',`Ultima partita: ${date(lastPlay)}`));
     content.append(when);
+    const cacheItem = q('.mini-info .gb3-cache-hint', card);
+    if (cacheItem) {
+      const status=makeElement('div','gb55-cache-state',cacheItem.textContent);
+      content.append(status);
+      if (cacheItem.classList.contains('gb3-import-hint')) {
+        const progress=makeElement('progress','gb3-rom-import-meter');
+        progress.max=100;progress.value=window.Gaemboy3DSCacheLibrary?.status()?.copyProgress || 0;
+        progress.setAttribute('aria-label','Avanzamento importazione ROM');content.append(progress);
+      }
+    }
     const expand = makeElement('button','gb55-more',expanded ? 'Chiudi dettagli  ⌃' : 'Maggiori dettagli  ⌄');
     expand.type = 'button';expand.setAttribute('aria-expanded',String(expanded));
     expand.addEventListener('click', e=>{e.stopPropagation(); expanded=!expanded;renderHero(info);});
@@ -350,6 +360,10 @@
       }
     },true);
     grid.addEventListener('load',scheduleRender,true);
+    window.addEventListener('gaemboy3ds:cache-usage', () => {
+      const meter=q('.gb55-hero .gb3-rom-import-meter',hero||document);
+      if (meter) meter.value=window.Gaemboy3DSCacheLibrary?.status()?.copyProgress || 0;
+    });
     const filter=q('#gb3-filter',root);
     filter?.addEventListener('input',scheduleRender);
     const mo=new MutationObserver(mutations=>{

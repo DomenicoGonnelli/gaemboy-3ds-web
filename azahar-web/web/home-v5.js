@@ -374,6 +374,8 @@
       Promise.resolve(manager.launch(g.path)).then(result => {
         if (result === 'needs-reimport') {
           setMessage('Seleziona di nuovo la ROM di «' + g.title + '». I salvataggi sono conservati.');
+        } else if (result === 'importing') {
+          setMessage('La ROM è ancora in importazione. Attendi il completamento prima di giocare.');
         } else if (result === 'failed' || result === 'missing-game') {
           setMessage('Impossibile avviare il gioco. Riprovare dall’elenco.', 'error');
         } else if (result === 'already-playing') {
@@ -489,8 +491,20 @@
     const info=document.createElement('div');info.className='mini-info';
     const title=document.createElement('span');title.className='mini-name';title.title=g.title;title.textContent=g.title;
     info.append(title);
-    if(g.element?.closest('li')?.dataset.cached==='false'){
-      const hint=document.createElement('small');hint.className='gb3-cache-hint';hint.textContent='Da reimportare';info.append(hint);
+    const row = g.element?.closest('li');
+    if(row?.dataset.copying==='true') {
+      const hint=document.createElement('small');hint.className='gb3-cache-hint gb3-import-hint';
+      hint.textContent='Importazione in corso'; info.append(hint);
+      const progress=document.createElement('progress');progress.className='gb3-rom-import-meter';
+      progress.max=100;progress.value=window.Gaemboy3DSCacheLibrary?.status()?.copyProgress || 0;
+      progress.setAttribute('aria-label','Avanzamento importazione ROM');info.append(progress);
+      const pct=document.createElement('span');pct.className='gb3-rom-import-pct';
+      pct.textContent=(progress.value||0)+'%';info.append(pct);
+    } else {
+      const hint=document.createElement('small');hint.className='gb3-cache-hint';
+      hint.textContent=row?.dataset.cached==='true' ? 'Pronto per giocare' : 'Da reimportare';
+      if(row?.dataset.cached==='true')hint.classList.add('gb3-ready-hint');
+      info.append(hint);
     }
     face.append(fill,wash,veil,art,info);
     face.addEventListener('click',ev=>{
@@ -526,7 +540,7 @@
     if(!root || root.hidden)return;
     const visibleGames=games.filter(g=>!hiddenGames.has(key(g)));
     const found=visibleGames.filter(g=>g.title.toLocaleLowerCase('it').includes(filter));
-    const sig=found.map(g=>key(g)+'|'+g.title+'|'+(blobUrls.get(key(g))||artworks.get(key(g))||matchCover(g)||g.img)+'|'+g.element?.closest('li')?.dataset.cached+'|'+openActionKey).join('\n')+'|hidden:'+hiddenGames.size;
+    const sig=found.map(g=>key(g)+'|'+g.title+'|'+(blobUrls.get(key(g))||artworks.get(key(g))||matchCover(g)||g.img)+'|'+g.element?.closest('li')?.dataset.cached+'|'+g.element?.closest('li')?.dataset.copying+'|'+openActionKey).join('\n')+'|hidden:'+hiddenGames.size;
     if(sig===displayedSnapshot)return;
     displayedSnapshot=sig;
     const grid=root.querySelector('#gb3-grid');
@@ -555,9 +569,15 @@
     }
     // A missing FileList is not an empty game collection: retain last known metadata.
     if(games.length)chosen=true;
-    renderFolder();renderCards();
+    renderFolder();renderCards();updateImportMeters();
   }
 
+  function updateImportMeters() {
+    const state=window.Gaemboy3DSCacheLibrary?.status();
+    const pct=Math.max(0,Math.min(100,state?.copyProgress ?? 0));
+    root?.querySelectorAll('.gb3-rom-import-meter').forEach(el=>el.value=pct);
+    root?.querySelectorAll('.gb3-rom-import-pct').forEach(el=>el.textContent=pct+'%');
+  }
   function scheduleRender() { clearTimeout(rebuildTimer);rebuildTimer=setTimeout(refresh,130); }
   function scheduleAutomaticScan() {
     clearTimeout(autoScanTimer);
@@ -628,10 +648,10 @@
           <div class="gb3-nomatch" id="gb3-nomatch" hidden>Nessun gioco corrisponde alla ricerca.</div>
           <div class="gb3-empty" id="gb3-empty">
             <div class="gb3-empty-icon">${icons.folder}</div><h2 id="gb3-empty-title">Nessun gioco importato</h2>
-            <p>Aggiungi una ROM per iniziare: Gaemboy la conserva automaticamente finché c’è spazio. I salvataggi rimangono anche se una ROM viene rimossa dalla cache.</p>
+            <p>Seleziona una ROM: la copertina comparirà qui e Gaemboy la copierà sul dispositivo. Quando è pronta, cliccala per giocare.</p>
             <div class="gb3-empty-cta"><button id="gb3-select-empty" type="button" class="gb3-button gb3-button-main">${icons.folder} + Aggiungi gioco</button></div>
             <button class="gb3-single" id="gb3-single" type="button" hidden>Aggiungi un altro gioco</button>
-            <div class="gb3-steps"><span><b>1</b> Aggiungi la tua ROM</span><span><b>2</b> Gioca, Gaemboy salva una copia locale</span></div>
+            <div class="gb3-steps"><span><b>1</b> Aggiungi la ROM</span><span><b>2</b> Attendi la copia</span><span><b>3</b> Clicca la copertina per giocare</span></div>
           </div>
         </section>
         <footer class="gb3-footer"><span>GAEMBOY 3DS · Basato su Azahar · Non affiliato a Nintendo</span><span><a href="https://github.com/libretro-thumbnails/Nintendo_-_Nintendo_3DS" target="_blank" rel="noopener noreferrer">Copertine: Libretro</a> · <a href="${SOURCE}" target="_blank" rel="noopener noreferrer">Sorgenti GPLv3+</a></span></footer>
@@ -643,10 +663,10 @@
           <header class="gb3-cache-dialog-head"><h2 id="gb3-cache-modal-title">Come funziona la cache?</h2><button id="gb3-cache-close" type="button" aria-label="Chiudi informazioni cache">×</button></header>
           <p>Quando aggiungi un gioco, Gaemboy prova a conservarne una copia <strong>sul tuo dispositivo</strong>. Non viene caricata su un server.</p>
           <ol>
-            <li><strong>Gioca subito.</strong> Il gioco può partire mentre viene eseguita la copia.</li>
-            <li><strong>Riapri senza importare.</strong> Al 100%, la ROM è pronta per le prossime partite.</li>
+            <li><strong>Aggiungi alla libreria.</strong> La copertina appare subito e la ROM viene copiata localmente con avanzamento visibile. Nessun avvio automatico.</li>
+            <li><strong>Premi la copertina per giocare.</strong> Soltanto dopo che la copia è stata completata e verificata, Gaemboy può riaprirla senza importarla di nuovo.</li>
             <li><strong>Spazio gestito automaticamente.</strong> Se la cache è piena, vengono eliminate prima le ROM meno utilizzate, dopo la tua autorizzazione iniziale.</li>
-            <li><strong>I salvataggi restano separati.</strong> Quando una ROM esce dalla cache, la card e i progressi restano. Basta reimportare lo stesso file.</li>
+            <li><strong>I salvataggi restano separati.</strong> Quando una ROM esce dalla cache, la card e i progressi restano. Basta reimportare lo stesso file.</li><li><strong>Spazio occupato non significa gioco pronto.</strong> Le copie parziali occupano memoria, ma puoi avviare solo quelle complete e verificate.</li>
           </ol>
           <p><strong>Spazio:</strong> 3 GB gratuiti. Da Gaemboy Premium è possibile sbloccare 5 o 8 GB quando l'abbonamento è verificato.</p>
           <p id="gb3-info-status" role="status">Controllo della cache in corso…</p>

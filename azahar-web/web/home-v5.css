@@ -537,3 +537,10 @@
 #gb3-home .gb3-cache-dialog .gb3-cache-footnote{font-size:11px;color:#caacc0}
 #gb3-home .gb3-cache-dialog .gb3-dialog-row .gb3-dialog-save{padding:11px 18px;font-weight:700}
 @media(max-width:650px){#gb3-home .gb3-cache-summary{gap:6px 10px}}
+
+/* PATCH08: library-first flow. A ROM is playable only once its cache is complete. */
+#gb3-home .gb3-ready-hint {color:#bcf4dc;background:rgba(20,60,43,.70)}
+#gb3-home .gb3-import-hint {color:#fff0bc;background:rgba(90,51,15,.7)}
+#gb3-home .gb3-rom-import-meter {display:block;width:min(100%,240px);height:7px;accent-color:#f067a1;margin-top:5px;border-radius:10px;}
+#gb3-home .gb3-rom-import-pct {color:#f8c5d8;font-size:10px;font-variant-numeric:tabular-nums;}
+#gb3-home .mini-card .gb3-rom-import-meter {width:100%;max-width:150px;}
