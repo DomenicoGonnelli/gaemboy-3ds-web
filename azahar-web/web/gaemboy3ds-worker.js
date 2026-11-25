@@ -189,7 +189,7 @@ async function openRomMirror(file, key) {
 }
 // Keeps the mirror directory within quota by deleting the least recently used other mirrors.
 // Application-level cap for disposable ROM mirrors. Save states are in IDBFS and are never touched.
-const ROM_MIRROR_LIMIT = 2 * 1024 * 1024 * 1024;
+const ROM_MIRROR_LIMIT = 3 * 1024 * 1024 * 1024;
 const ROM_MIRROR_RESERVE = 64 * 1024 * 1024;
 async function makeRoomForMirror(dir, key, size) {
   // An oversized ROM can still be played from the user-selected File without caching it.

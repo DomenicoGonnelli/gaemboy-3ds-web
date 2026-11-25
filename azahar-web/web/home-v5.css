@@ -512,3 +512,8 @@
 
 /* Cache-aware cards, keep existing Gaemboy mini-card layout and save-state hero. */
 #gb3-home .gb3-cache-hint {display:inline-block;margin-top:5px;padding:3px 8px;border-radius:8px;background:rgba(15,20,31,.7);color:#ffd2a3;font-size:10px;font-weight:700;letter-spacing:.01em}
+
+/* GAEMBOY 3DS cache tiers: shown only after verified Gaemboy Premium grant. */
+#gb3-home .gb3-cache-settings{display:flex;align-items:center;gap:8px;font-size:12px;color:#f7d3e6;white-space:nowrap;}
+#gb3-home .gb3-cache-settings[hidden]{display:none!important;}
+#gb3-home .gb3-cache-settings select{appearance:auto;background:#47163e;border:1px solid #a24c80;border-radius:10px;color:#fff;padding:9px 10px;font-size:12px;min-height:40px;}

@@ -388,12 +388,21 @@
     if(!root)return;
     const state=window.Gaemboy3DSCacheLibrary?.status();
     if(!window.Gaemboy3DSCacheLibrary?.enabled)return;
-    const used=state?.used||0, limit=state?.limit||2*1024**3;
+    const used=state?.used||0, limit=state?.limit||3*1024**3;
     const size=n=>n>=1024**3?(n/1024**3).toFixed(2)+' GB':Math.round(n/1024**2)+' MB';
     root.querySelector('#gb3-folder-name').textContent=games.length+' giochi nella tua libreria';
     root.querySelector('#gb3-folder-sub').textContent=state?.supported===false
       ? 'Memoria locale non disponibile: le ROM si potranno comunque aprire.'
       : `Cache locale ${size(used)} / ${size(limit)} · Salvataggi separati`;
+    const quotaControl=root.querySelector('#gb3-cache-tier');
+    const quotaWrap=root.querySelector('#gb3-cache-settings');
+    if (quotaControl && quotaWrap) {
+      quotaWrap.hidden=!state?.premium;
+      if (state?.premium) {
+        quotaControl.value=String(state.selectedGb || 3);
+        for(const option of quotaControl.options) option.disabled=Number(option.value)>state.maxGb;
+      }
+    }
     root.querySelector('#gb3-select').textContent='+ Aggiungi gioco';
     root.querySelector('#gb3-scan').hidden=true;
   }
@@ -594,7 +603,7 @@
         <div class="gb3-scroller" id="gb3-scroller">
         <section class="gb3-config" aria-label="Gestione libreria">
           <div class="gb3-config-copy"><div class="gb3-config-icon">${icons.folder}</div><div><div class="gb3-eyebrow">LIBRERIA LOCALE</div><strong id="gb3-folder-name">Nessun gioco importato</strong><p id="gb3-folder-sub">ROM salvate automaticamente, senza caricarle online</p></div></div>
-          <div class="gb3-config-buttons"><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-main">+ Aggiungi gioco</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-soft" hidden>${icons.refresh} Aggiorna libreria</button></div>
+          <div class="gb3-config-buttons"><label id="gb3-cache-settings" class="gb3-cache-settings" hidden>Cache Premium <select id="gb3-cache-tier" aria-label="Spazio cache Premium"><option value="3">3 GB</option><option value="5">5 GB</option><option value="8">8 GB</option></select></label><button id="gb3-restore-games" type="button" class="gb3-button gb3-button-soft" hidden>Ripristina rimossi</button><button id="gb3-select" type="button" class="gb3-button gb3-button-main">+ Aggiungi gioco</button><button id="gb3-scan" type="button" class="gb3-button gb3-button-soft" hidden>${icons.refresh} Aggiorna libreria</button></div>
         </section>
         <div id="gb3-status" class="gb3-status" role="status" aria-live="polite" hidden></div>
         <section class="gb3-content" aria-label="Giochi Nintendo 3DS">
@@ -623,6 +632,11 @@
       </div>
     `;
     document.body.append(root);
+    root.querySelector('#gb3-cache-tier').addEventListener('change', e => {
+      const ok=window.Gaemboy3DSCacheLibrary?.chooseCacheGb(Number(e.target.value));
+      if(!ok)setMessage('La cache da 5 o 8 GB richiede Gaemboy Premium.', 'info');
+      renderFolder();
+    });
     root.querySelector('#gb3-select').addEventListener('click',chooseFolder);
     root.querySelector('#gb3-select-empty').addEventListener('click',chooseFolder);
     root.querySelector('#gb3-scan').addEventListener('click',()=>importGames(false));

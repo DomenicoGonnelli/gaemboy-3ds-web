@@ -11,7 +11,9 @@ const OFF = {
 import {
   validRom, registerRom, romFingerprint, listCatalog, putCatalogGame, deleteCatalogGame,
   cachedFile, cacheUsage, cacheRom, removeCachedRom, ROM_LIMIT,
-} from './gaemboy3ds-cache.js?v=27';
+} from './gaemboy3ds-cache.js?v=29';
+import { allowedCacheGb, verifyGaemboyGrant, GIB } from './gaemboy3ds-entitlement.js?v=1';
+import { GAEMBOY_PREMIUM_PUBLIC_JWK } from './gaemboy3ds-premium-key.js?v=1';
 import { bindTouchControls } from './gaemboy3ds-touch.js?v=26';
 
 const STATE_SIZE = 360;
@@ -547,7 +549,57 @@ let pendingImportKey = null;
 let cacheBusy = false;
 let managedCachePct = null;
 let importQueue = Promise.resolve();
-const libState = { ready: false, used: 0, limit: ROM_LIMIT, status: '' };
+const libState = { ready: false, used: 0, limit: ROM_LIMIT, status: '', premium: false, maxGb: 3, selectedGb: 3 };
+let verifiedGrant = null;
+let selectedTierInMemory = null;
+const CACHE_PREF = 'gb3-cache-preferred-tier';
+// Only a signed, short-lived grant issued by Gaemboy can unlock the 5/8 GB tiers.
+// A direct visit without a grant ALWAYS starts with the free 3 GiB limit.
+async function restorePremiumGrant() {
+  try {
+    const hash = new URLSearchParams(location.hash.slice(1));
+    const fresh = hash.get('gb3ds_access');
+    let token = fresh || (history.state && history.state.gb3dsAccessToken) || null;
+    if (fresh) {
+      // Keep the grant out of address bar, referrers and copy-pasted links.
+      hash.delete('gb3ds_access');
+      const nextHash = hash.toString();
+      history.replaceState({ ...(history.state || {}), gb3dsAccessToken: fresh }, '',
+        location.pathname + location.search + (nextHash ? '#' + nextHash : ''));
+    }
+    if (token) verifiedGrant = await verifyGaemboyGrant(token, GAEMBOY_PREMIUM_PUBLIC_JWK);
+  } catch (error) {
+    verifiedGrant = null;
+    log('[premium] Accesso non verificato, limite gratuito: ' + error.message);
+    // Clear invalid or expired grants. Never persist Premium credentials in localStorage.
+    const current = { ...(history.state || {}) };
+    delete current.gb3dsAccessToken;
+    history.replaceState(current, '', location.pathname + location.search + location.hash);
+  }
+  updatePremiumCacheLimit();
+}
+function updatePremiumCacheLimit() {
+  const active = verifiedGrant?.exp > Date.now() / 1000 ? verifiedGrant : null;
+  libState.premium = Boolean(active);
+  libState.maxGb = active?.maxGb || 3;
+  let requested = selectedTierInMemory ?? 3;
+  try { requested = selectedTierInMemory ?? Number(localStorage.getItem(CACHE_PREF) || 3); } catch { /* Private mode */ }
+  libState.selectedGb = allowedCacheGb(active, requested);
+  libState.limit = libState.selectedGb * GIB;
+  return libState.limit;
+}
+function choosePremiumCacheGb(value) {
+  updatePremiumCacheLimit();
+  const requested = Number(value);
+  if (![3, 5, 8].includes(requested) || requested > libState.maxGb) return false;
+  selectedTierInMemory = requested;
+  try { localStorage.setItem(CACHE_PREF, String(requested)); } catch { /* Private mode: selection lasts only for this page */ }
+  updatePremiumCacheLimit();
+  void updateSpace();
+  return true;
+}
+const premiumReady = restorePremiumGrant();
+
 
 function libStatus(message, error = false) {
   libState.status = message;
@@ -563,6 +615,7 @@ async function updateSpace() {
   try {
     const usage = await cacheUsage();
     libState.used = usage.used;
+    updatePremiumCacheLimit();
     libState.supported = usage.supported;
   } catch (error) {
     libState.supported = false;
@@ -610,6 +663,7 @@ async function restoreCacheCatalog() {
     }
     libState.ready = true;
     renderLibrary();
+    await premiumReady;
     await updateSpace();
     libStatus(saved.length ? `${saved.length} giochi nella libreria.` : 'Premi + Aggiungi gioco per iniziare.');
   } catch (error) { libStatus(`Libreria locale non disponibile: ${error.message}`, true); }
@@ -648,7 +702,10 @@ function queueCache(file, game) {
     cacheBusy = true;
     try {
       libStatus(`Ottimizzazione spazio di «${game.name}» in corso…`);
+      await premiumReady;
+      const limitBytes = updatePremiumCacheLimit();
       const result = await cacheRom(file, game, {
+        limitBytes,
         activeKeys: new Set(activeGameKey ? [activeGameKey] : []),
         confirmEviction: async (evict) => {
           // First eviction is explained; future evictions are automatic once accepted.
@@ -668,7 +725,7 @@ function queueCache(file, game) {
         sessionFiles.delete(game.key);
         libStatus(`«${game.name}» pronto per le prossime partite.`, false);
       } else if (result.reason === 'oversize') {
-        libStatus(`«${game.name}» supera 2 GB: puoi giocare, ma andrà reimportato.`, false);
+        libStatus(`«${game.name}» supera ${libState.selectedGb} GB di cache: puoi giocare, ma andrà reimportato.`, false);
       } else {
         libStatus(`«${game.name}» avviabile: copia locale non disponibile (${result.reason}).`, false);
       }
@@ -737,8 +794,14 @@ $('file').addEventListener('cancel', () => { pendingImportKey = null; });
 addEventListener('dragover', e => e.preventDefault());
 addEventListener('drop', e => { e.preventDefault(); if (!worker) void importFiles(e.dataTransfer?.files); });
 
+// Expiring entitlements downgrade the next cache operation to 3 GiB automatically.
+setInterval(() => {
+  if (libState.premium && verifiedGrant?.exp <= Date.now() / 1000) void updateSpace();
+}, 60000);
+
 window.Gaemboy3DSCacheLibrary = {
   enabled: true,
+  chooseCacheGb: choosePremiumCacheGb,
   status: () => ({ ...libState, games: libGames.size, copying: cacheBusy }),
   add: () => $('pick').click(),
   fileForCover: async path => {

@@ -44,12 +44,12 @@ test('evicts least recently used ROM, never the active ROM', () => {
     {key:'older', bytes:900 * MiB, lastPlayed:5},
     {key:'newer', bytes:200 * MiB, lastPlayed:90},
   ];
-  const plan = planEvictions(groups,'incoming',600 * MiB,2 * GiB, new Set(['active']));
+  const plan = planEvictions(groups,'incoming',1400 * MiB,2 * GiB, new Set(['active']));
   assert.equal(plan.enough,true);
   assert.deepEqual(plan.evict.map(x=>x.key),['older']);
 });
 
-test('never approves a ROM larger than the 2 GiB application cap', () => {
+test('never approves a ROM larger than the 3 GiB free application cap', () => {
   const plan = planEvictions([], 'big', ROM_LIMIT + 1, 20 * GiB);
   assert.equal(plan.enough,false);
 });
@@ -63,4 +63,12 @@ test('returns insufficient capacity when no safely evictable ROM exists', () => 
 test('leaves reserve for the other persistent storage', () => {
   const plan = planEvictions([], 'incoming', 100 * MiB, 100 * MiB + ROM_RESERVE - 1);
   assert.equal(plan.enough,false);
+});
+
+test('Premium quota 5 or 8 GiB changes eviction limit without affecting free default', () => {
+  const selected = new Set();
+  assert.equal(planEvictions([], 'new', 4 * GiB, 9 * GiB, selected).enough, false);
+  assert.equal(planEvictions([], 'new', 4 * GiB, 9 * GiB, selected, 5 * GiB).enough, true);
+  assert.equal(planEvictions([], 'new', 7 * GiB, 9 * GiB, selected, 8 * GiB).enough, true);
+  assert.equal(planEvictions([], 'new', 9 * GiB, 12 * GiB, selected, 8 * GiB).enough, false);
 });

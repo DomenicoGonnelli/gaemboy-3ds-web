@@ -1,6 +1,6 @@
 // GAEMBOY 3DS: persistent catalog + a single, disposable OPFS ROM cache.
 // The .bin/.map format intentionally matches gaemboy3ds-worker.js; IDBFS saves are unrelated.
-export const ROM_LIMIT = 2 * 1024 ** 3;
+export const ROM_LIMIT = 3 * 1024 ** 3; // Free public site; Premium limit is explicit and verified.
 export const ROM_RESERVE = 64 * 1024 ** 2;
 const ROM_BLOCK = 1024 ** 2;
 const COPY_CHUNK = 4 * ROM_BLOCK;
@@ -49,7 +49,7 @@ export function mirrorMapComplete(bytes, size, block = ROM_BLOCK) {
   return true;
 }
 
-export function planEvictions(groups, incomingKey, incomingSize, freeBytes, protectedKeys = new Set()) {
+export function planEvictions(groups, incomingKey, incomingSize, freeBytes, protectedKeys = new Set(), limitBytes = ROM_LIMIT) {
   const active = groups.filter(g => g.key !== incomingKey);
   const ownSize = groups.find(g => g.key === incomingKey)?.bytes || 0;
   let used = groups.reduce((n, g) => n + g.bytes, 0);
@@ -60,14 +60,14 @@ export function planEvictions(groups, incomingKey, incomingSize, freeBytes, prot
   const needFree = incomingSize + ROM_RESERVE;
   const candidates = active.filter(g => !protectedKeys.has(g.key))
     .sort((a, b) => (a.lastPlayed || a.used || 0) - (b.lastPlayed || b.used || 0));
-  while ((used - ownSize + incomingSize > ROM_LIMIT || free < needFree) && candidates.length) {
+  while ((used - ownSize + incomingSize > limitBytes || free < needFree) && candidates.length) {
     const victim = candidates.shift();
     evict.push(victim);
     used -= victim.bytes;
     free += victim.bytes;
   }
-  return { evict, enough: incomingSize <= ROM_LIMIT &&
-    used - ownSize + incomingSize <= ROM_LIMIT && free >= needFree };
+  return { evict, enough: incomingSize <= limitBytes &&
+    used - ownSize + incomingSize <= limitBytes && free >= needFree };
 }
 
 function openDb() {
@@ -169,9 +169,11 @@ export async function removeCachedRom(key) {
   if (dir) await eraseMirror(dir, key);
 }
 
-export async function cacheRom(file, game, { activeKeys = new Set(), confirmEviction = () => false, onProgress = () => {} } = {}) {
+export async function cacheRom(file, game, { activeKeys = new Set(), confirmEviction = () => false, onProgress = () => {}, limitBytes = ROM_LIMIT } = {}) {
   if (!validRom(file) || file.size !== game.size) throw new Error('File ROM non corrispondente.');
-  if (file.size > ROM_LIMIT) return { cached: false, reason: 'oversize' };
+  // Caller may raise the cap only after validating a signed Gaemboy entitlement.
+  limitBytes = Number.isFinite(limitBytes) ? Math.max(0, Math.min(8 * 1024 ** 3, limitBytes)) : ROM_LIMIT;
+  if (file.size > limitBytes) return { cached: false, reason: 'oversize' };
   const dir = await directory();
   if (!dir) return { cached: false, reason: 'unsupported' };
   if (await cachedFile(game)) return { cached: true, reused: true };
@@ -183,7 +185,7 @@ export async function cacheRom(file, game, { activeKeys = new Set(), confirmEvic
     if (!usage || !Number.isFinite(usage.quota) || !Number.isFinite(usage.usage))
       return { cached: false, reason: 'quota-unavailable' };
     const free = Math.max(0, usage.quota - usage.usage);
-    const plan = planEvictions(groups, game.key, game.size, free, activeKeys);
+    const plan = planEvictions(groups, game.key, game.size, free, activeKeys, limitBytes);
     if (!plan.enough) return { cached: false, reason: 'space' };
     if (plan.evict.length && !(await confirmEviction(plan.evict)))
       return { cached: false, reason: 'cancelled' };
