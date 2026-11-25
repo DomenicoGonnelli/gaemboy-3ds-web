@@ -11,6 +11,7 @@ class FakeDirectory {
   files = new Map();
   failAfterWrites = Infinity;
   writes = 0;
+  syncOnly = false;
   async getDirectoryHandle(name) { assert.equal(name, 'gaemboy-rom-mirror'); return this; }
   async removeEntry(name) {
     if (!this.files.delete(name)) throw Object.assign(new Error('not found'), { name: 'NotFoundError' });
@@ -19,6 +20,15 @@ class FakeDirectory {
     if (!this.files.has(name)) this.files.set(name, new Uint8Array(0));
     const self = this;
     return {
+      // WebKit simulation: no async createWritable method anywhere.
+      ...(this.syncOnly ? {} : { async createWritable() {
+        let bytes;
+        return {
+          async write(data) { bytes = new Uint8Array(data); },
+          async close() { self.files.set(name,bytes); },
+          async abort() {},
+        };
+      }}),
       async createSyncAccessHandle() {
         return {
           getSize: () => self.files.get(name).byteLength,
@@ -32,14 +42,6 @@ class FakeDirectory {
             return data.byteLength;
           },
           flush() {}, close() {},
-        };
-      },
-      async createWritable() {
-        let bytes;
-        return {
-          async write(data) { bytes = new Uint8Array(data); },
-          async close() { self.files.set(name,bytes); },
-          async abort() {},
         };
       },
     };
@@ -87,4 +89,15 @@ test('invalid key is rejected without creating any files',async()=>{
   const messages=await runWorker(dir,new Blob(['hello']),'../../saves');
   assert.equal(messages.at(-1).code,'invalid-input');
   assert.equal(dir.files.size,0);
+});
+
+test('Safari OPFS writer publishes both data and bitmap without createWritable()', async () => {
+  const dir = new FakeDirectory();
+  dir.syncOnly = true;
+  const file = new Blob([new Uint8Array([7, 9, 11, 13, 15])]);
+  const key = 'c'.repeat(64);
+  const messages = await runWorker(dir, file, key);
+  assert.equal(messages.at(-1).type, 'complete');
+  assert.equal(mirrorMapComplete(dir.files.get(key+'.map'),file.size),true);
+  assert.deepEqual(dir.files.get(key+'.bin'),new Uint8Array([7,9,11,13,15]));
 });

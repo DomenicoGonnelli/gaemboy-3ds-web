@@ -4,6 +4,8 @@ export const ROM_LIMIT = 3 * 1024 ** 3; // Free public site; Premium limit is ex
 export const ROM_RESERVE = 64 * 1024 ** 2;
 const ROM_BLOCK = 1024 ** 2;
 const COPY_CHUNK = 4 * ROM_BLOCK;
+const IDB_CHUNK_STORE = 'rom-cache-chunks';
+const IDB_STATE_STORE = 'rom-cache-state';
 const DIR_NAME = 'gaemboy-rom-mirror';
 const DB_NAME = 'gaemboy3ds-library';
 const STORE = 'games';
@@ -73,10 +75,12 @@ export function planEvictions(groups, incomingKey, incomingSize, freeBytes, prot
 
 function openDb() {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 2);
+    const req = indexedDB.open(DB_NAME, 3);
     req.onupgradeneeded = () => {
       if (!req.result.objectStoreNames.contains('handles')) req.result.createObjectStore('handles');
       if (!req.result.objectStoreNames.contains(STORE)) req.result.createObjectStore(STORE, { keyPath: 'key' });
+      if (!req.result.objectStoreNames.contains(IDB_CHUNK_STORE)) req.result.createObjectStore(IDB_CHUNK_STORE);
+      if (!req.result.objectStoreNames.contains(IDB_STATE_STORE)) req.result.createObjectStore(IDB_STATE_STORE, { keyPath: 'key' });
     };
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
@@ -100,6 +104,79 @@ export const getCatalogGame = key => dbAction('readonly', store => store.get(key
 export const putCatalogGame = entry => dbAction('readwrite', store => store.put(entry));
 export const deleteCatalogGame = key => dbAction('readwrite', store => store.delete(key));
 
+// IndexedDB Blob-chunk fallback for Safari/WebKit variants without either OPFS
+// writing API. It shares the same quota as OPFS but never touches IDBFS saves.
+const chunkId = (key, index) => `${key}:${String(index).padStart(6, '0')}`;
+const chunkRange = key => IDBKeyRange.bound(`${key}:`, `${key};`);
+async function idbAction(storeName, mode, operation) {
+  const db = await openDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(storeName, mode);
+      const req = operation(tx.objectStore(storeName));
+      tx.oncomplete = () => resolve(req?.result);
+      tx.onabort = tx.onerror = () => reject(tx.error || req?.error || new Error('IndexedDB non disponibile'));
+    });
+  } finally { db.close(); }
+}
+const cacheState = key => idbAction(IDB_STATE_STORE, 'readonly', store => store.get(key));
+const allCacheStates = () => idbAction(IDB_STATE_STORE, 'readonly', store => store.getAll());
+
+async function removeIdbCache(key) {
+  if (!await cacheState(key)) return;
+  const db = await openDb();
+  try {
+    const ids = await idbAction(IDB_CHUNK_STORE, 'readonly', store => store.getAllKeys(chunkRange(key)));
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction([IDB_CHUNK_STORE, IDB_STATE_STORE], 'readwrite');
+      for (const id of ids) tx.objectStore(IDB_CHUNK_STORE).delete(id);
+      tx.objectStore(IDB_STATE_STORE).delete(key);
+      tx.oncomplete = resolve;
+      tx.onabort = tx.onerror = () => reject(tx.error || new Error('Rimozione cache IndexedDB non riuscita'));
+    });
+  } finally { db.close(); }
+}
+
+async function cachedIdbFile(game) {
+  if (!game?.key) return null;
+  const state = await cacheState(game.key);
+  if (!state?.completed || state.total !== game.size || state.bytesStored !== game.size) return null;
+  const chunks = await idbAction(IDB_CHUNK_STORE, 'readonly', store => store.getAll(chunkRange(game.key)));
+  const expected = Math.ceil(game.size / COPY_CHUNK);
+  if (chunks.length !== expected || chunks.some((chunk, i) => !(chunk instanceof Blob) ||
+      chunk.size !== Math.min(COPY_CHUNK, game.size - i * COPY_CHUNK))) return null;
+  // Blob concatenation is lazy on most browsers; no arrayBuffer() of the full ROM.
+  return new File(chunks, game.name, { lastModified: game.lastModified || Date.now() });
+}
+
+async function copyIdbChunks(file, game, onProgress) {
+  let state = await cacheState(game.key);
+  if (state && (state.total !== file.size || state.bytesStored % COPY_CHUNK !== 0 && !state.completed)) {
+    await removeIdbCache(game.key);
+    state = null;
+  }
+  let copied = state?.completed ? 0 : (state?.bytesStored || 0);
+  if (state?.completed) { await removeIdbCache(game.key); }
+  for (let offset = copied; offset < file.size; offset += COPY_CHUNK) {
+    const end = Math.min(offset + COPY_CHUNK, file.size);
+    const blob = file.slice(offset, end);
+    const db = await openDb();
+    try {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction([IDB_CHUNK_STORE, IDB_STATE_STORE], 'readwrite');
+        tx.objectStore(IDB_CHUNK_STORE).put(blob, chunkId(game.key, Math.floor(offset / COPY_CHUNK)));
+        tx.objectStore(IDB_STATE_STORE).put({ key: game.key, total: file.size,
+          bytesStored: end, completed: end === file.size, updatedAt: Date.now() });
+        tx.oncomplete = resolve;
+        tx.onerror = tx.onabort = () => reject(tx.error || new Error('Copia IndexedDB non riuscita'));
+      });
+    } finally { db.close(); }
+    onProgress(end / file.size, end, file.size, copied);
+    if (end !== file.size) await new Promise(resolve => setTimeout(resolve, 0));
+  }
+  return { cached: Boolean(await cachedIdbFile(game)), backend: 'indexeddb' };
+}
+
 export async function registerRom(file) {
   if (!validRom(file)) throw new Error('Seleziona una ROM 3DS valida (.3ds, .cci, .cxi, .app, .3dsx o .elf).');
   const key = await romFingerprint(file);
@@ -114,8 +191,13 @@ export async function registerRom(file) {
 
 async function directory() {
   if (!navigator.storage?.getDirectory) return null;
-  const root = await navigator.storage.getDirectory();
-  return root.getDirectoryHandle(DIR_NAME, { create: true });
+  try {
+    const root = await navigator.storage.getDirectory();
+    return root.getDirectoryHandle(DIR_NAME, { create: true });
+  } catch (error) {
+    if (['NotSupportedError', 'NotAllowedError', 'SecurityError'].includes(error?.name)) return null;
+    throw error;
+  }
 }
 
 export async function scanMirrors(dir) {
@@ -135,27 +217,29 @@ export async function scanMirrors(dir) {
 }
 
 export async function cachedFile(game) {
+  if (!game?.key) return null;
   const dir = await directory();
-  if (!dir || !game?.key) return null;
-  try {
+  if (dir) try {
     const [bin, map] = await Promise.all([
       dir.getFileHandle(`${game.key}.bin`), dir.getFileHandle(`${game.key}.map`),
     ]);
     const [file, marker] = await Promise.all([bin.getFile(), map.getFile()]);
-    if (file.size !== game.size || !mirrorMapComplete(new Uint8Array(await marker.arrayBuffer()), game.size)) return null;
-    // File([Blob]) is a lazy Blob wrapper: the core still uses WORKERFS.slice(), not full memory copy.
-    return new File([file], game.name, { lastModified: game.lastModified || Date.now() });
+    if (file.size === game.size && mirrorMapComplete(new Uint8Array(await marker.arrayBuffer()), game.size)) {
+      return new File([file], game.name, { lastModified: game.lastModified || Date.now() });
+    }
   } catch (error) {
-    if (error?.name === 'NotFoundError') return null;
-    throw error;
+    if (error?.name !== 'NotFoundError') throw error;
   }
+  return cachedIdbFile(game);
 }
 
 export async function cacheUsage() {
   const dir = await directory();
-  if (!dir) return { supported: false, used: 0, limit: ROM_LIMIT };
-  const groups = await scanMirrors(dir);
-  return { supported: true, used: groups.reduce((s, g) => s + g.bytes, 0), limit: ROM_LIMIT };
+  const groups = dir ? await scanMirrors(dir) : [];
+  const idb = await allCacheStates();
+  return { supported: Boolean(dir || typeof indexedDB !== 'undefined'),
+    used: groups.reduce((s, g) => s + g.bytes, 0) + idb.reduce((s, g) => s + (g.bytesStored || 0), 0),
+    limit: ROM_LIMIT };
 }
 
 async function eraseMirror(dir, key) {
@@ -168,6 +252,7 @@ async function eraseMirror(dir, key) {
 export async function removeCachedRom(key) {
   const dir = await directory();
   if (dir) await eraseMirror(dir, key);
+  await removeIdbCache(key);
 }
 
 // Uses a dedicated worker so large ROMs never need to be buffered in the UI thread.
@@ -176,7 +261,7 @@ async function incrementalCopy(file, game, onProgress) {
   if (typeof Worker !== 'function') return { supported: false };
   let worker;
   try {
-    worker = new Worker(new URL('./gaemboy3ds-cache-copy-worker.js', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./gaemboy3ds-cache-copy-worker.js?v=06', import.meta.url), { type: 'module' });
   } catch { return { supported: false }; }
   return new Promise(resolve => {
     let settled = false;
@@ -212,12 +297,15 @@ export async function cacheRom(file, game, { activeKeys = new Set(), confirmEvic
   limitBytes = Number.isFinite(limitBytes) ? Math.max(0, Math.min(8 * 1024 ** 3, limitBytes)) : ROM_LIMIT;
   if (file.size > limitBytes) return { cached: false, reason: 'oversize' };
   const dir = await directory();
-  if (!dir) return { cached: false, reason: 'unsupported' };
+  if (!dir && typeof indexedDB === 'undefined') return { cached: false, reason: 'unsupported' };
   if (await cachedFile(game)) return { cached: true, reused: true };
   const execute = async () => {
     // A second browser tab cannot safely overwrite a mirror while the first one is using it.
     if (await cachedFile(game)) return { cached: true, reused: true };
-    const groups = await scanMirrors(dir);
+    const groups = [
+      ...(dir ? await scanMirrors(dir) : []),
+      ...(await allCacheStates()).map(s => ({ key: s.key, bytes: s.bytesStored || 0, used: s.updatedAt || 0 })),
+    ];
     const usage = await navigator.storage?.estimate?.();
     if (!usage || !Number.isFinite(usage.quota) || !Number.isFinite(usage.usage))
       return { cached: false, reason: 'quota-unavailable' };
@@ -227,21 +315,34 @@ export async function cacheRom(file, game, { activeKeys = new Set(), confirmEvic
     if (plan.evict.length && !(await confirmEviction(plan.evict)))
       return { cached: false, reason: 'cancelled' };
     // Replacing an incomplete mirror invalidates its bitmap first; never publish partial bytes.
-    for (const victim of plan.evict) await eraseMirror(dir, victim.key);
-    // Keep any incomplete .bin: a repeated import can continue after the last
-    // fully-written 4 MiB chunk. The worker publishes the .map only on success.
-    const incremental = await incrementalCopy(file, game, onProgress);
-    if (incremental.supported) return incremental;
-    // Fallback is an atomic copy. It needs room for a temporary full file, not
-    // just the missing part of an existing mirror.
+    for (const victim of plan.evict) {
+      if (dir) await eraseMirror(dir, victim.key);
+      await removeIdbCache(victim.key);
+    }
+    // Worker API is supported in WebKit; it publishes both .bin AND .map via
+    // createSyncAccessHandle, never createWritable() alone.
+    if (dir) {
+      const incremental = await incrementalCopy(file, game, onProgress);
+      if (incremental.supported) return incremental;
+    }
+    // Chromium can also provide async writable streams, but Safari may expose
+    // neither on the page. Check BOTH handles before attempting either one.
+    const target = dir ? await dir.getFileHandle(`${game.key}.bin`, { create: true }) : null;
+    const markerTarget = dir ? await dir.getFileHandle(`${game.key}.map`, { create: true }) : null;
+    if (!target || typeof target.createWritable !== 'function' ||
+        !markerTarget || typeof markerTarget.createWritable !== 'function') {
+      if (dir) await eraseMirror(dir, game.key);
+      return copyIdbChunks(file, game, onProgress);
+    }
+    // An async writer may use another full-size temporary file internally.
     const updated = await scanMirrors(dir);
     const priorSize = updated.find(g => g.key === game.key)?.bytes || 0;
     const recent = await navigator.storage.estimate();
     if (recent.quota - recent.usage + priorSize < file.size + ROM_RESERVE)
       return { cached: false, reason: 'space' };
     await eraseMirror(dir, game.key);
-    const target = await dir.getFileHandle(`${game.key}.bin`, { create: true });
-    const writer = await target.createWritable();
+    const asyncTarget = await dir.getFileHandle(`${game.key}.bin`, { create: true });
+    const writer = await asyncTarget.createWritable();
     let copied = 0;
     try {
       for (let offset = 0; offset < file.size; offset += COPY_CHUNK) {

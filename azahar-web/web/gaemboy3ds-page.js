@@ -11,7 +11,7 @@ const OFF = {
 import {
   validRom, registerRom, romFingerprint, listCatalog, putCatalogGame, deleteCatalogGame,
   cachedFile, cacheUsage, cacheRom, removeCachedRom, ROM_LIMIT,
-} from './gaemboy3ds-cache.js?v=29';
+} from './gaemboy3ds-cache.js?v=31';
 import { allowedCacheGb, verifyGaemboyGrant, GIB } from './gaemboy3ds-entitlement.js?v=1';
 import { GAEMBOY_PREMIUM_PUBLIC_JWK } from './gaemboy3ds-premium-key.js?v=1';
 import { bindTouchControls } from './gaemboy3ds-touch.js?v=26';
@@ -756,6 +756,10 @@ function queueCache(file, game) {
         },
       });
       if (result.cached) {
+        // Never discard the live File until the persisted copy can actually be
+        // reopened. On Safari the OPFS / IndexedDB backend may fail late.
+        const stored = await cachedFile(game);
+        if (!stored) throw new Error('La copia non è leggibile dopo la scrittura. Il file originale resta utilizzabile in questa sessione.');
         cacheNotice('');
         game.cached = true;
         sessionFiles.delete(game.key);

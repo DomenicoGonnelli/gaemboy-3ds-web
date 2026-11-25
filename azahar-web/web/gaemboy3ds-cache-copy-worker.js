@@ -54,9 +54,29 @@ self.onmessage = async ({ data }) => {
     }
     sync.flush(); sync.close(); sync = null;
     const map = await dir.getFileHandle(`${key}.map`, { create: true });
-    const writable = await map.createWritable();
-    try { await writable.write(completedMap(file.size)); await writable.close(); }
-    catch (error) { await writable.abort().catch(() => {}); throw error; }
+    // Safari/WebKit implements OPFS synchronous access handles inside dedicated
+    // workers, but older versions do not expose FileSystemFileHandle.createWritable().
+    // Publish the completion bitmap with the SAME API used for the .bin file.
+    const marker = completedMap(file.size);
+    if (typeof map.createSyncAccessHandle === 'function') {
+      const mapSync = await map.createSyncAccessHandle();
+      try {
+        mapSync.truncate(0);
+        let offset = 0;
+        while (offset < marker.length) {
+          const wrote = mapSync.write(marker.subarray(offset), { at: offset });
+          if (!Number.isInteger(wrote) || wrote <= 0) throw new Error('Scrittura mappa OPFS incompleta');
+          offset += wrote;
+        }
+        mapSync.flush();
+      } finally { mapSync.close(); }
+    } else if (typeof map.createWritable === 'function') {
+      const writable = await map.createWritable();
+      try { await writable.write(marker); await writable.close(); }
+      catch (error) { await writable.abort?.(); throw error; }
+    } else {
+      self.postMessage({ type: 'unsupported' }); return;
+    }
     self.postMessage({ type: 'complete', bytes: file.size, resumed });
   } catch (error) {
     // Some browsers expose the method but do not allow sync handles on OPFS.
