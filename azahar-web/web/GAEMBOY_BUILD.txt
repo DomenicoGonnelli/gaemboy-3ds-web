@@ -1,4 +1,4 @@
-GAEMBOY 3DS - Gameplay UX15
-Base: Gameplay UX14
-Save state cards enlarged; speed target slider 0.5x-8x; rotation action removed.
-No modifications to core Azahar or ROM cache.
+GAEMBOY 3DS - Visual UX16
+Base: Gameplay UX15
+Only Gaemboy-original menu icons and scoped CSS for pause menu, speed slider and save gallery.
+No 3DS core, ROM cache, worker, React components or save state logic changed.
