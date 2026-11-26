@@ -314,6 +314,8 @@ function instrumentTicks() {
       if (performance.now() - lastPerfFlush >= 1000) flushPerf();
     };
     // Unthrottled event-loop scheduling avoids an extra timer on the hot path.
+    // At normal speed let Azahar handle timing: no second JS timer on the audio-critical path.
+    if (gb15SpeedTarget === 1) { tick(); return; }
     if (wait > 1) setTimeout(tick,Math.ceil(wait)); else tick();
   };
 }

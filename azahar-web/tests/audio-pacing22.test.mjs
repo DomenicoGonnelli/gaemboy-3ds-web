@@ -1,0 +1,38 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+const root=path.resolve(import.meta.dirname,'../web');
+const worker=fs.readFileSync(path.join(root,'gaemboy3ds-worker.js'),'utf8');
+const page=fs.readFileSync(path.join(root,'gaemboy3ds-page.js'),'utf8');
+const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+test('normal 1x uses core scheduling without setTimeout even if tick arrives early',()=>{
+  const begin=worker.indexOf('let gb15SpeedTarget = 1;');
+  const end=worker.indexOf('instrumentGL();',begin);
+  assert(begin>=0&&end>begin);
+  const snippet=worker.slice(begin,end);
+  let time=1000, ticks=0;
+  const timers=[];
+  const mc={port1:{onmessage(){ticks++;}}};
+  const ctx={self:{__gb3ds_mc:mc},performance:{now(){return time;}},perf:{ticks:0,tickMs:0,tickMax:0},setTimeout(fn,ms){timers.push({fn,ms});},lastPerfFlush:1e9,flushPerf(){}};
+  vm.runInNewContext(snippet,ctx);
+  ctx.instrumentTicks();
+  mc.port1.onmessage({});
+  time=1002;
+  mc.port1.onmessage({});
+  assert.equal(ticks,2);
+  assert.equal(timers.length,0);
+  assert.equal(ctx.perf.ticks,2);
+  ctx.gb15SetSpeed(0.5);
+  time=1100;
+  mc.port1.onmessage({});
+  time=1101;
+  mc.port1.onmessage({});
+  assert.equal(timers.length,1);
+});
+test('worker and page use refreshed versions without changing audio worklet',()=>{
+  assert.match(page,/gaemboy3ds-worker\.js\?v=14&audio22/);
+  assert.match(html,/gaemboy3ds-page\.js\?v=20&audio22/);
+  assert.match(worker,/gb15SpeedTarget === 1/);
+});
