@@ -24,12 +24,12 @@ test('cheat panel uses original Gaemboy look without React or new core cheat typ
   assert.match(css, /linear-gradient\(135deg,#10b981 0%,#059669 100%\)/);
   assert.match(css, /\.gb17-cheat-item\.enabled/);
   assert.match(css, /\.gb17-cheat-toggle input:checked \+ \.gb17-toggle-slider/);
-  assert.match(html, /Formato supportato dal core 3DS: Gateway/);
+  assert.match(html, /Il core Azahar 3DS supporta soltanto Gateway/);
   assert.doesNotMatch(html,/id="gb13-cheat-details"/);
   assert.match(page,/performFeature\('add-cheat'/);
   assert.match(page,/performFeature\('toggle-cheat'/);
   assert.match(page,/performFeature\('delete-cheat'/);
-  assert.match(html, /content="game-ui17"/);
+  assert.match(html, /content="game-ui18"/);
 });
 
 test('cheat cards preserve underlying worker index after enabled-first sorting', async () => {
@@ -68,5 +68,5 @@ test('cheat form toggle does not start the emulator or change save / cache modul
   assert.match(page,/function gb17CloseCheats\(\)/);
   assert.match(page,/\$\('gb13-quick-cheats'\)\.onclick = \(\) => void gb17OpenCheats\(\)/);
   assert.match(page,/gb17CloseCheats\(\);/);
-  assert.match(html,/gaemboy3ds-page\.js\?v=17/);
+  assert.match(html,/gaemboy3ds-page\.js\?v=18/);
 });

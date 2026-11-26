@@ -1,5 +1,4 @@
-GAEMBOY 3DS Web — Gameplay UX17 (CheatCodesModal visual adaptation)
+GAEMBOY 3DS Web — Gameplay UX18 (Centered cheat dialog and validated Gateway input)
 Branch: feature/gaemboy-3ds-home-v2
-Base: UX16
-Cheat UI: original Gaemboy CheatCodesModal look, Gateway-only 3DS backend unchanged.
-Pause: Riprendi #d61750, Tasti shortcut hidden (keyboard mappings retained).
+Base: UX17B
+Gateway-only 3DS core; unsupported formats disabled; live syntax validation and core dry-run check before saving.

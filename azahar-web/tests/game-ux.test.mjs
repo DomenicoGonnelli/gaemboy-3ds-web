@@ -54,7 +54,7 @@ test('styles use phone layout and do not hide the native menu',()=>{
 });
 test('menu retains existing buttons, save states and diagnostics',()=>{
  for(const id of ['audio','throttle','save','back-library','state-save','state-load','cheat-add','mic-toggle','camera-toggle','dl-log','keyboard-reset','keyboard-bindings']) assert.match(html,new RegExp(`id="${id}"`));
- assert.match(html,/content="game-ui17"/);
+ assert.match(html,/content="game-ui18"/);
  assert.match(page,/gaemboy3ds-keymap\.js\?v=12/);
 });
 test('Escape opens/closes the menu and mapping stays in localStorage',()=>{

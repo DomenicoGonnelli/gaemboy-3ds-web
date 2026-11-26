@@ -14,8 +14,8 @@
 <link rel="stylesheet" href="./gaemboy3ds-ui.css?v=10">
   <link rel="stylesheet" href="home-v5.css?v=10">
   <link rel="stylesheet" href="home-v5-5.css?v=10">
-<link rel="stylesheet" href="./gaemboy3ds-game.css?v=17">
-<meta name="gaemboy-build" content="game-ui17">
+<link rel="stylesheet" href="./gaemboy3ds-game.css?v=18">
+<meta name="gaemboy-build" content="game-ui18">
 </head>
 <body>
 <main>
@@ -140,13 +140,27 @@
           <h4>Nuovo cheat</h4>
           <label for="cheat-name">Nome</label>
           <input id="cheat-name" maxlength="128" autocomplete="off" placeholder="Es. Oggetti infiniti">
+          <label for="gb18-cheat-type">Tipologia di cheat</label>
+          <select id="gb18-cheat-type" aria-describedby="gb18-cheat-type-hint">
+            <optgroup label="Supportati su Nintendo 3DS">
+              <option value="gateway">Gateway (3DS) — XXXXXXXX XXXXXXXX</option>
+            </optgroup>
+            <optgroup label="Non supportati dal core 3DS">
+              <option value="action-replay-ds" disabled>Action Replay (NDS) — non disponibile</option>
+              <option value="gameshark" disabled>GameShark (GBA/GBC) — non disponibile</option>
+              <option value="codebreaker" disabled>CodeBreaker (GBA) — non disponibile</option>
+              <option value="gamegenie" disabled>Game Genie — non disponibile</option>
+            </optgroup>
+          </select>
+          <span id="gb18-cheat-type-hint" class="gb17-cheat-format">Il core Azahar 3DS supporta soltanto Gateway. Gli altri formati sono disponibili su altre console Gaemboy.</span>
           <label for="cheat-code">Codice Gateway</label>
           <textarea id="cheat-code" rows="5" maxlength="65536" spellcheck="false" placeholder="XXXXXXXX XXXXXXXX (una istruzione per riga)"></textarea>
-          <span class="gb17-cheat-format">Formato supportato dal core 3DS: Gateway</span>
+          <span class="gb17-cheat-format">Il testo viene formattato automaticamente. Ogni istruzione richiede 8+8 cifre esadecimali.</span>
+          <p id="gb18-cheat-validation" class="gb18-cheat-validation" role="status" aria-live="polite"></p>
           <label class="gb17-cheat-enabled-label"><input id="cheat-enabled" type="checkbox"> Attiva subito</label>
           <div class="gb17-cheat-form-actions">
             <button id="gb17-cheat-cancel" type="button" class="gb17-cheat-cancel">Annulla</button>
-            <button id="cheat-add" type="button" class="gb17-cheat-submit">Aggiungi cheat</button>
+            <button id="cheat-add" type="button" class="gb17-cheat-submit" disabled>Aggiungi cheat</button>
           </div>
         </div>
         <div id="cheat-list" class="gb17-cheat-list" aria-live="polite"></div>
@@ -261,7 +275,7 @@
   }
 </script>
 <script defer src="./gaemboy3ds-game.js?v=13"></script>
-<script type="module" src="./gaemboy3ds-page.js?v=17"></script>
+<script type="module" src="./gaemboy3ds-page.js?v=18"></script>
   <script defer src="home-v5-hash.js?v=10"></script>
 <script defer src="home-v5.js?v=10"></script>
   <script defer src="home-v5-5.js?v=10"></script>

@@ -545,3 +545,36 @@ body.playing #selection-footer {display:none!important;}
 @media(prefers-reduced-motion:reduce) {
   #game-menu.gb13-pause .gb17-cheat-item,#game-menu.gb13-pause .gb17-toggle-slider,#game-menu.gb13-pause .gb17-toggle-slider:before {transition:none!important;}
 }
+
+/* GAEMBOY UX18: modal centered in viewport; footer and validation remain readable. */
+#game-menu.gb13-pause.gb17-cheats-open::before {
+  content:"";position:fixed;inset:0;background:rgba(0,0,0,.76);z-index:6;pointer-events:none;
+}
+#game-menu.gb13-pause .gb17-cheat-panel:not([hidden]) {
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:min(720px,calc(100vw - 24px));max-height:calc(100dvh - 24px);
+  margin:0;padding:0;z-index:7;box-sizing:border-box;
+}
+#game-menu.gb13-pause .gb17-cheat-content {
+  min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+}
+#game-menu.gb13-pause .gb17-cheat-header {flex:none;}
+#game-menu.gb13-pause #gb17-cheat-status {
+  flex:none;max-width:100%;margin:0;padding:8px 20px max(10px,env(safe-area-inset-bottom));
+  line-height:1.45;overflow-wrap:anywhere;
+}
+#game-menu.gb13-pause .gb17-cheat-form select {
+  width:100%;min-height:44px;box-sizing:border-box;padding:10px 14px;
+  border:1px solid rgba(255,255,255,.18);border-radius:10px;
+  background:#352c35;color:#fff;font:inherit;appearance:auto;
+}
+#game-menu.gb13-pause .gb17-cheat-form select:focus-visible {outline:2px solid #d61750;outline-offset:2px;}
+#game-menu.gb13-pause .gb18-cheat-validation {margin:0;font-size:.8rem;line-height:1.5;color:#81e5b1;min-height:1.25em;}
+#game-menu.gb13-pause .gb18-cheat-validation.invalid {color:#ffb6ad;}
+#game-menu.gb13-pause #cheat-code[aria-invalid="true"] {border-color:#d56c78;}
+#game-menu.gb13-pause #cheat-add:disabled {opacity:.5;cursor:not-allowed;transform:none;box-shadow:none;}
+@media(max-width:600px){
+ #game-menu.gb13-pause .gb17-cheat-panel:not([hidden]) {max-height:calc(100dvh - 12px);width:calc(100vw - 12px);}
+ #game-menu.gb13-pause #gb17-cheat-status {padding:8px 12px max(10px,env(safe-area-inset-bottom));}
+}

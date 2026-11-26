@@ -576,6 +576,10 @@ async function command(action, data) {
     }
     case 'cheats':
       return { cheats: listCheats() };
+    case 'validate-cheat':
+      // Dry-run native Gateway parser. Does not modify or persist the cheat list.
+      addCheat({ name: String(data.name || '').trim(), code: String(data.code || ''), enabled: false }, true);
+      return { valid: true };
     case 'add-cheat':
       if (mod._gb3ds_cheat_count() >= 256) throw new Error('Limite di 256 cheat raggiunto.');
       addCheat({ name: data.name.trim(), code: data.code, enabled: !!data.enabled });

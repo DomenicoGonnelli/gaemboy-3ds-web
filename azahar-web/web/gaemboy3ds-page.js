@@ -16,6 +16,7 @@ import { allowedCacheGb, verifyGaemboyGrant, GIB } from './gaemboy3ds-entitlemen
 import { GAEMBOY_PREMIUM_PUBLIC_JWK } from './gaemboy3ds-premium-key.js?v=1';
 import { bindTouchControls } from './gaemboy3ds-touch.js?v=26';
 import { ACTIONS, STORAGE_KEY, defaults, normalizeBindings, remap, toMaps, describeCode } from './gaemboy3ds-keymap.js?v=12';
+import { formatGatewayInput, validateGatewayInput } from './gaemboy3ds-cheat-format.mjs?v=18';
 
 const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
@@ -1145,6 +1146,7 @@ $('gb13-settings-back').onclick = gb13CloseSettings;
 // UX17: Gaemboy cheat modal appearance, without React or any new core functions.
 function gb17ShowCheatForm(show) {
   $('gb17-cheat-form').hidden = !show;
+  if (show) gb18RefreshCheatValidation();
   $('gb17-cheat-new').hidden = !!show;
   if (show) $('cheat-name').focus({preventScroll:true});
 }
@@ -1153,6 +1155,7 @@ function gb17CloseCheats() {
   gb17ShowCheatForm(false);
   $('gb13-pause-actions').hidden = false;
   $('gb17-cheat-status').textContent = '';
+  gameMenu.classList.remove('gb17-cheats-open');
 }
 async function gb17OpenCheats() {
   gb14CloseGallery();
@@ -1160,6 +1163,7 @@ async function gb17OpenCheats() {
   gb13CloseSettings();
   $('gb13-pause-actions').hidden = true;
   $('gb17-cheats-panel').hidden = false;
+  gameMenu.classList.add('gb17-cheats-open');
   gb17ShowCheatForm(false);
   try { await performFeature('cheats'); }
   catch (err) { $('gb17-cheat-status').textContent = 'Impossibile leggere i cheat: ' + (err.message || String(err)); }
@@ -1439,11 +1443,51 @@ $('export-saves').onclick = async () => {
   setTimeout(() => URL.revokeObjectURL(url), 60000);
   featureMessage(`Backup esportato: ${result.files} file.`);
 };
+// UX18: match the original Gaemboy cheat form interaction, with Gateway-only core support.
+function gb18RefreshCheatValidation() {
+  const type = $('gb18-cheat-type').value;
+  const code = validateGatewayInput($('cheat-code').value);
+  const named = $('cheat-name').value.trim();
+  const typeOK = type === 'gateway';
+  const ok = typeOK && !!named && code.ok;
+  const message = !typeOK ? 'Questo formato non è supportato dal core 3DS.' :
+    $('cheat-code').value.trim() && !code.ok ? code.message :
+    !named ? 'Inserisci un nome per il cheat.' : code.message;
+  const feedback = $('gb18-cheat-validation');
+  feedback.textContent = message;
+  feedback.classList.toggle('invalid', !ok);
+  $('cheat-code').setAttribute('aria-invalid', String(!code.ok));
+  $('cheat-add').disabled = !ok;
+  return { ok, code, message };
+}
+$('gb18-cheat-type').addEventListener('change', gb18RefreshCheatValidation);
+$('cheat-name').addEventListener('input', gb18RefreshCheatValidation);
+$('cheat-code').addEventListener('input', () => {
+  const input = $('cheat-code');
+  const before = input.value;
+  const cursor = input.selectionStart ?? before.length;
+  const formatted = formatGatewayInput(before);
+  if (before !== formatted) {
+    const newCursor = formatGatewayInput(before.slice(0, cursor)).length;
+    input.value = formatted;
+    try { input.setSelectionRange(newCursor, newCursor); } catch {}
+  }
+  gb18RefreshCheatValidation();
+});
 $('cheat-add').onclick = async () => {
+  const validation = gb18RefreshCheatValidation();
+  if (!validation.ok) {
+    $('gb17-cheat-status').textContent = validation.message;
+    $('cheat-code').focus({preventScroll: true});
+    return;
+  }
   const name = $('cheat-name').value.trim();
-  const code = $('cheat-code').value.trim();
-  if (!name || !code) {
-    featureMessage('Inserisci il nome e il codice Gateway.', true);
+  const code = validation.code.code;
+  // A second, authoritative dry run through the Azahar Gateway parser.
+  // No cheat is created or persisted when the core rejects a valid-looking instruction.
+  const preflight = await performFeature('validate-cheat', {name, code});
+  if (!preflight) {
+    $('gb17-cheat-status').textContent = 'Codice rifiutato dal core 3DS. Controlla le istruzioni Gateway.';
     return;
   }
   const result = await performFeature('add-cheat', {
@@ -1453,6 +1497,7 @@ $('cheat-add').onclick = async () => {
     $('cheat-name').value = '';
     $('cheat-code').value = '';
     $('cheat-enabled').checked = false;
+    $('gb18-cheat-type').value = 'gateway';
     gb17ShowCheatForm(false);
     $('gb17-cheat-status').textContent = 'Cheat aggiunto.';
   }
