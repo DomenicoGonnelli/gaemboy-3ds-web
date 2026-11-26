@@ -15,21 +15,56 @@ import {
 import { allowedCacheGb, verifyGaemboyGrant, GIB } from './gaemboy3ds-entitlement.js?v=1';
 import { GAEMBOY_PREMIUM_PUBLIC_JWK } from './gaemboy3ds-premium-key.js?v=1';
 import { bindTouchControls } from './gaemboy3ds-touch.js?v=26';
+import { ACTIONS, STORAGE_KEY, defaults, normalizeBindings, remap, toMaps, describeCode } from './gaemboy3ds-keymap.js?v=12';
 
 const STATE_SIZE = 360;
 const STATUS = ['avvio', 'caricamento…', 'in esecuzione', 'errore'];
 const NATIVE_FPS = 59.83;
 const AUDIO_HZ = 32728;
 // libretro joypad ids: B0 Y1 Select2 Start3 Up4 Down5 Left6 Right7 A8 X9 L10 R11 ZL12 ZR13 Home14
-const KEYMAP = {
-  ArrowUp: 4, ArrowDown: 5, ArrowLeft: 6, ArrowRight: 7, KeyX: 8, KeyZ: 0, KeyS: 9, KeyA: 1,
-  KeyQ: 10, KeyW: 11, KeyE: 12, KeyR: 13, Enter: 3, Backspace: 2,
-};
-// Analog sticks on the keyboard (libretro analog: Y grows downwards).
-const STICK_KEYS = {
-  KeyJ: ['analogLX', -1], KeyL: ['analogLX', 1], KeyI: ['analogLY', -1], KeyK: ['analogLY', 1],
-  KeyF: ['analogRX', -1], KeyH: ['analogRX', 1], KeyT: ['analogRY', -1], KeyG: ['analogRY', 1],
-};
+function loadKeyboardBindings() {
+  try { return normalizeBindings(JSON.parse(localStorage.getItem(STORAGE_KEY))); }
+  catch { return defaults(); }
+}
+let keyboardBindings = loadKeyboardBindings();
+let { buttons: KEYMAP, sticks: STICK_KEYS } = toMaps(keyboardBindings);
+let mappingAction = null;
+function persistKeyboardBindings() {
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(keyboardBindings)); }
+  catch { $('keymap-status').textContent = 'Impostazioni attive, ma non salvabili nel browser.'; }
+}
+function renderKeyboardBindings() {
+  const root = $('keyboard-bindings');
+  if (!root) return;
+  root.replaceChildren();
+  for (const action of ACTIONS) {
+    const row = document.createElement('div');
+    row.className = 'gb3-key-row';
+    const label = document.createElement('span');
+    label.textContent = action.label;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'alt gb3-key-button';
+    button.dataset.keyAction = action.id;
+    button.textContent = mappingAction === action.id ? 'Premi un tasto...' : describeCode(keyboardBindings[action.id]);
+    button.setAttribute('aria-label', `Cambia tasto per ${action.label}`);
+    button.setAttribute('aria-pressed', String(mappingAction === action.id));
+    button.onclick = () => {
+      mappingAction = action.id;
+      $('keymap-status').textContent = `Premi il nuovo tasto per ${action.label}. Esc annulla.`;
+      renderKeyboardBindings();
+      root.querySelector(`[data-key-action="${action.id}"]`)?.focus();
+    };
+    row.append(label, button); root.append(row);
+  }
+}
+function cancelRemap() {
+  if (!mappingAction) return false;
+  mappingAction = null;
+  $('keymap-status').textContent = 'Modifica annullata.';
+  renderKeyboardBindings();
+  return true;
+}
 // Standard Gamepad API layout mapped by position, Nintendo style (bottom = B, right = A, ...).
 const PAD_BUTTONS = { 0: 0, 1: 8, 2: 1, 3: 9, 4: 10, 5: 11, 6: 12, 7: 13, 8: 2, 9: 3, 12: 4, 13: 5, 14: 6, 15: 7, 16: 14 };
 const PAD_DEADZONE = 0.15;
@@ -125,6 +160,7 @@ function refreshFeatureControls() {
   $('state-save').disabled = !selected;
   $('state-load').disabled = $('state-delete').disabled = !selected?.exists;
   $('camera-facing').disabled = !!cameraStream;
+  gb13UpdateQuickAvailability();
 }
 
 function requestCommand(action, data = {}) {
@@ -966,17 +1002,146 @@ $('audio').onclick = async () => {
   $('audio').textContent = audioOn ? 'Audio: on' : 'Audio: off';
 };
 $('save').onclick = () => worker && worker.postMessage({ type: 'sync' });
-$('open-menu').onclick = () => {
+function openGameMenu() {
+  if (!document.body.classList.contains('playing') || gameMenu.open) return;
   resetInput();
+  gb13CloseSettings();
+  $('menu-title').textContent = $('game-title').textContent || 'Gioco in pausa';
   gameMenu.showModal();
   refreshFeatureControls();
+  renderKeyboardBindings();
+}
+$('open-menu').onclick = openGameMenu;
+$('close-menu').onclick = () => { cancelRemap(); gameMenu.close(); };
+$('keyboard-reset').onclick = () => {
+  resetInput();
+  keyboardBindings = defaults();
+  ({buttons: KEYMAP, sticks: STICK_KEYS} = toMaps(keyboardBindings));
+  mappingAction = null;
+  persistKeyboardBindings();
+  $('keymap-status').textContent = 'Tasti predefiniti ripristinati.';
+  renderKeyboardBindings();
 };
-$('close-menu').onclick = () => gameMenu.close();
+// Escape is reserved for the game menu, never a configurable gameplay key.
+window.addEventListener('keydown', (event) => {
+  if (mappingAction) {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    if (event.code === 'Escape') { cancelRemap(); return; }
+    if (event.repeat) return;
+    const updated = remap(keyboardBindings, mappingAction, event.code);
+    if (!updated) { $('keymap-status').textContent = 'Tasto non disponibile. Scegli una lettera, numero, freccia o Invio.'; return; }
+    resetInput();
+    keyboardBindings = updated;
+    ({buttons: KEYMAP, sticks: STICK_KEYS} = toMaps(keyboardBindings));
+    mappingAction = null;
+    persistKeyboardBindings();
+    $('keymap-status').textContent = 'Tasto aggiornato.';
+    renderKeyboardBindings();
+    return;
+  }
+  if (event.code !== 'Escape' || !document.body.classList.contains('playing')) return;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  if (gameMenu.open) gameMenu.close(); else openGameMenu();
+}, { capture: true });
+gameMenu.addEventListener('cancel', (e) => {
+  if (mappingAction) { e.preventDefault(); cancelRemap(); }
+});
 gameMenu.addEventListener('close', () => {
+  gb13CloseSettings();
+  mappingAction = null;
   resetInput();
   refreshFeatureControls();
   canvas.focus({ preventScroll: true });
 });
+// ---------------------------------------------------------------- Gaemboy-style pause menu (Patch 13)
+// The quick buttons delegate to the existing, tested 3DS handlers. No duplicate
+// save-state format, new emulator inputs or new unsupported link implementation.
+function gb13Feedback(message, error = false) {
+  const node = $('gb13-quick-status');
+  node.textContent = message;
+  node.classList.toggle('bad', error);
+}
+function gb13CloseSettings() {
+  gameMenu.classList.remove('gb13-settings-open');
+  $('gb13-settings-panel').hidden = true;
+  $('gb13-pause-actions').hidden = false;
+  $('gb13-settings-title').textContent = 'Impostazioni';
+}
+function gb13OpenSettings(title = 'Impostazioni', detailsId = null) {
+  gameMenu.classList.add('gb13-settings-open');
+  $('gb13-settings-panel').hidden = false;
+  $('gb13-pause-actions').hidden = true;
+  $('gb13-settings-title').textContent = title;
+  for (const panel of $('gb13-settings-panel').querySelectorAll('details')) panel.open = false;
+  if (detailsId) {
+    const panel = $(detailsId);
+    if (panel) { panel.open = true; panel.scrollIntoView({block:'nearest',behavior:'auto'}); }
+  }
+  $('gb13-settings-back').focus({preventScroll:true});
+}
+function gb13UpdateQuickAvailability() {
+  const running = !!memory && readI('status') === 2;
+  const readyToSave = running && storageAvailable && !featureBusy;
+  $('gb13-quick-save').disabled = !readyToSave || $('state-save').disabled;
+  $('gb13-quick-load').disabled = !readyToSave || $('state-load').disabled;
+  $('gb13-quick-fast').disabled = !running;
+  $('gb13-quick-mic').disabled = !running || mediaBusy;
+  // Link-cable emulation is not implemented by the Azahar web core.
+  $('gb13-quick-link').disabled = true;
+  $('gb13-quick-rotate').disabled = !document.body.classList.contains('gb3-input-mobile') ||
+    typeof screen.orientation?.lock !== 'function';
+  $('gb13-quick-fast').setAttribute('aria-pressed', String(running && readI('throttle') === 0));
+}
+$('gb13-settings-back').onclick = gb13CloseSettings;
+$('gb13-quick-settings').onclick = () => gb13OpenSettings();
+$('gb13-quick-cheats').onclick = () => gb13OpenSettings('Codici Cheat','gb13-cheat-details');
+$('gb13-quick-speed').onclick = () => gb13OpenSettings('Imposta velocità');
+$('gb13-quick-save').onclick = () => {
+  if (!$('state-save').disabled) { gb13Feedback('Salvataggio rapido: operazione in corso…'); $('state-save').click(); }
+};
+$('gb13-quick-load').onclick = () => {
+  if (!$('state-load').disabled) { gb13Feedback('Caricamento rapido: operazione in corso…'); $('state-load').click(); }
+};
+$('gb13-quick-fast').onclick = () => {
+  if (!memory || $('gb13-quick-fast').disabled) return;
+  $('throttle').click();
+  gb13UpdateQuickAvailability();
+  gb13Feedback(readI('throttle') ? 'Velocità normale.' : 'Velocità aumentata.');
+};
+$('gb13-quick-mic').onclick = () => {
+  if ($('mic-toggle').disabled) return;
+  $('mic-toggle').click();
+  gb13Feedback('Richiesta microfono avviata.');
+};
+$('gb13-quick-exit').onclick = () => $('back-library').click();
+$('gb13-quick-screenshot').onclick = async () => {
+  const blob = await savePreview();
+  if (!blob) { gb13Feedback('Screenshot non disponibile con questo renderer.',true); return; }
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'gaemboy3ds-screenshot-' + Date.now() + '.png';
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url),60000);
+  gb13Feedback('Screenshot acquisito.');
+};
+$('gb13-quick-rotate').onclick = async () => {
+  if ($('gb13-quick-rotate').disabled) return;
+  try {
+    const next = screen.orientation.type.startsWith('landscape') ? 'portrait' : 'landscape';
+    await screen.orientation.lock(next);
+    gb13Feedback('Orientamento aggiornato.');
+  } catch (_) { gb13Feedback('Il browser non consente la rotazione da questa pagina.',true); }
+};
+// Forward core status messages to the visible quick-action footer.
+new MutationObserver(() => {
+  if (!gameMenu.open) return;
+  const message = $('feature-status').textContent.trim();
+  if (message) gb13Feedback(message,$('feature-status').classList.contains('bad'));
+}).observe($('feature-status'),{childList:true,characterData:true,subtree:true});
+
 $('back-library').onclick = async () => {
   if (cacheBusy && !confirm('La ROM è ancora in fase di salvataggio. Uscendo adesso la copia resterà incompleta e potrebbe essere necessario reimportarla. Continuare?')) return;
   if (!confirm('Tornare alla selezione giochi? I progressi non salvati nel gioco o in uno stato andranno persi.')) return;

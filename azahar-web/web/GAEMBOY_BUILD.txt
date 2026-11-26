@@ -1,3 +1,4 @@
-Gaemboy 3DS - gameplay UX 11
-Desktop: skin Gaemboy, touch controls within console; mobile: no skin.
-Source: feature/gaemboy-3ds-home-v2.
+GAEMBOY 3DS — gameplay UX 13
+Base: feature/gaemboy-3ds-home-v2, incremental over UX12
+UI: screen-only desktop, touch mobile/tablet, Gaemboy-style fullscreen pause menu
+Core/ROM cache unchanged
