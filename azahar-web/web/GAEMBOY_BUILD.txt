@@ -1,4 +1,5 @@
-GAEMBOY 3DS - Visual UX16
-Base: Gameplay UX15
-Only Gaemboy-original menu icons and scoped CSS for pause menu, speed slider and save gallery.
-No 3DS core, ROM cache, worker, React components or save state logic changed.
+GAEMBOY 3DS Web — Gameplay UX17 (CheatCodesModal visual adaptation)
+Branch: feature/gaemboy-3ds-home-v2
+Base: UX16
+Cheat UI: original Gaemboy CheatCodesModal look, Gateway-only 3DS backend unchanged.
+Pause: Riprendi #d61750, Tasti shortcut hidden (keyboard mappings retained).

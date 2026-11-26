@@ -38,7 +38,7 @@ test('loading and ready states propagate to library cards with visible progress'
   assert.match(home, /Da reimportare/);
   assert.match(page, /libState\.copyingKey = game\.key/);
   assert.match(page, /sessionFiles\.delete\(game\.key\)/);
-  assert.match(html, /gaemboy3ds-page\.js\?v=15/);
+  assert.match(html, /gaemboy3ds-page\.js\?v=17/);
 });
 
 test('registering a ROM does not set last played time until actual launch', () => {

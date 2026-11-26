@@ -14,8 +14,8 @@
 <link rel="stylesheet" href="./gaemboy3ds-ui.css?v=10">
   <link rel="stylesheet" href="home-v5.css?v=10">
   <link rel="stylesheet" href="home-v5-5.css?v=10">
-<link rel="stylesheet" href="./gaemboy3ds-game.css?v=16">
-<meta name="gaemboy-build" content="game-ui16">
+<link rel="stylesheet" href="./gaemboy3ds-game.css?v=17">
+<meta name="gaemboy-build" content="game-ui17">
 </head>
 <body>
 <main>
@@ -94,7 +94,7 @@
     <h2 id="menu-title">Gioco in pausa</h2>
   </div>
   <div class="gb13-pause-tray">
-    <div class="gb13-tray-top"><span class="gb13-tray-subtitle">MENU DI PAUSA</span><button id="gb14-open-keys" type="button" class="gb14-keys-link">Tasti</button><button id="close-menu" type="button" class="gb13-resume" autofocus>Riprendi</button></div>
+    <div class="gb13-tray-top"><span class="gb13-tray-subtitle">MENU DI PAUSA</span><button id="close-menu" type="button" class="gb13-resume" autofocus>Riprendi</button></div>
     <div id="gb13-pause-actions" class="gb13-pause-actions" role="group" aria-label="Azioni di gioco">
       <button type="button" id="gb13-quick-save" class="gb13-action" aria-label="Salvataggio rapido"><img class="gb16-menu-icon" src="./gaemboy-menu-icons/save.png" alt="" loading="eager" decoding="async"><span>Salvataggio<br>Rapido</span></button>
       <button type="button" id="gb13-quick-load" class="gb13-action" aria-label="Caricamento rapido"><img class="gb16-menu-icon" src="./gaemboy-menu-icons/load.png" alt="" loading="eager" decoding="async"><span>Caricamento<br>Rapido</span></button>
@@ -126,6 +126,33 @@
       <div class="gb14-gallery-head"><button id="gb14-gallery-back" type="button">← Menu</button><h3 id="gb14-gallery-title">Salvataggi rapidi</h3><span id="gb14-gallery-count"></span></div>
       <div id="gb14-gallery-list" class="gb14-gallery-list"></div>
       <p id="gb14-gallery-message" role="status" aria-live="polite"></p>
+    </section>
+    <!-- UX17: CheatCodesModal appearance from Gaemboy; the existing 3DS Gateway handlers remain the backend. -->
+    <section id="gb17-cheats-panel" class="gb17-cheat-panel" aria-labelledby="gb17-cheat-title" hidden>
+      <header class="gb17-cheat-header">
+        <button id="gb17-cheats-back" type="button" class="gb17-cheat-back">← Indietro</button>
+        <h3 id="gb17-cheat-title">Codici Cheat</h3>
+        <span id="gb17-cheat-count" aria-live="polite"></span>
+      </header>
+      <fieldset id="cheat-actions" class="gb17-cheat-content" disabled>
+        <button id="gb17-cheat-new" type="button" class="gb17-add-cheat">+ Nuovo cheat</button>
+        <div id="gb17-cheat-form" class="gb17-cheat-form" hidden>
+          <h4>Nuovo cheat</h4>
+          <label for="cheat-name">Nome</label>
+          <input id="cheat-name" maxlength="128" autocomplete="off" placeholder="Es. Oggetti infiniti">
+          <label for="cheat-code">Codice Gateway</label>
+          <textarea id="cheat-code" rows="5" maxlength="65536" spellcheck="false" placeholder="XXXXXXXX XXXXXXXX (una istruzione per riga)"></textarea>
+          <span class="gb17-cheat-format">Formato supportato dal core 3DS: Gateway</span>
+          <label class="gb17-cheat-enabled-label"><input id="cheat-enabled" type="checkbox"> Attiva subito</label>
+          <div class="gb17-cheat-form-actions">
+            <button id="gb17-cheat-cancel" type="button" class="gb17-cheat-cancel">Annulla</button>
+            <button id="cheat-add" type="button" class="gb17-cheat-submit">Aggiungi cheat</button>
+          </div>
+        </div>
+        <div id="cheat-list" class="gb17-cheat-list" aria-live="polite"></div>
+        <p id="gb17-cheat-empty" class="gb17-cheat-empty">Nessun cheat aggiunto.<small>Premi “Nuovo cheat” per inserire un codice Gateway.</small></p>
+      </fieldset>
+      <p id="gb17-cheat-status" class="gb17-cheat-status" role="status" aria-live="polite"></p>
     </section>
     <p id="gb13-quick-status" role="status" aria-live="polite" class="gb13-quick-status"></p>
     <div id="gb13-settings-panel" class="gb13-settings-panel" hidden>
@@ -159,18 +186,6 @@
         <button id="state-delete" type="button" class="alt" disabled>Elimina stato</button>
         <button id="export-saves" type="button" class="alt">Esporta backup ZIP</button>
       </div>
-    </fieldset>
-  </details>
-  <details id="gb13-cheat-details">
-    <summary><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16"/></svg><span>Cheat</span></summary>
-    <fieldset id="cheat-actions" disabled>
-      <label for="cheat-name">Nome</label>
-      <input id="cheat-name" maxlength="128" placeholder="Nome del cheat">
-      <label for="cheat-code">Codice Gateway (una riga per istruzione)</label>
-      <textarea id="cheat-code" rows="4" maxlength="65536" placeholder="XXXXXXXX XXXXXXXX"></textarea>
-      <label><input id="cheat-enabled" type="checkbox"> Attiva subito</label>
-      <button id="cheat-add" type="button">Aggiungi cheat</button>
-      <div id="cheat-list"></div>
     </fieldset>
   </details>
   <details id="keyboard-settings">
@@ -246,7 +261,7 @@
   }
 </script>
 <script defer src="./gaemboy3ds-game.js?v=13"></script>
-<script type="module" src="./gaemboy3ds-page.js?v=15"></script>
+<script type="module" src="./gaemboy3ds-page.js?v=17"></script>
   <script defer src="home-v5-hash.js?v=10"></script>
 <script defer src="home-v5.js?v=10"></script>
   <script defer src="home-v5-5.js?v=10"></script>

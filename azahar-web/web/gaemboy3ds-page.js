@@ -220,33 +220,46 @@ function renderSlots(items) {
 }
 
 function renderCheats(items) {
+  // Gaemboy CheatCodesModal UX: enabled codes first, with a native accessible switch.
+  // Keep the original worker index for toggle/delete (the visual order can differ).
   const list = $('cheat-list');
   list.replaceChildren();
-  for (const [index, cheat] of items.entries()) {
-    const item = document.createElement('div');
-    item.className = 'cheat-item';
-    const label = document.createElement('label');
-    const enabled = document.createElement('input');
-    enabled.type = 'checkbox';
-    enabled.checked = cheat.enabled;
+  const sorted = items.map((cheat, index) => ({ cheat, index }))
+    .sort((a,b) => Number(!!b.cheat.enabled) - Number(!!a.cheat.enabled));
+  $('gb17-cheat-count').textContent = `${items.length} codic${items.length === 1 ? 'e' : 'i'}`;
+  $('gb17-cheat-empty').hidden = items.length !== 0;
+  for (const {cheat, index} of sorted) {
+    const item = document.createElement('article');
+    item.className = `gb17-cheat-item${cheat.enabled ? ' enabled' : ''}`;
+    const info = document.createElement('div');
+    info.className = 'gb17-cheat-info';
+    const name = document.createElement('strong');
+    name.className = 'gb17-cheat-name'; name.textContent = cheat.name;
+    const details = document.createElement('div'); details.className = 'gb17-cheat-details';
+    const code = document.createElement('code'); code.className = 'gb17-cheat-code'; code.textContent = cheat.code;
+    const format = document.createElement('span'); format.className = 'gb17-cheat-type'; format.textContent = 'Gateway';
+    details.append(code, format);
+    info.append(name, details);
+    const actions = document.createElement('div'); actions.className = 'gb17-cheat-row-actions';
+    const toggleLabel = document.createElement('label'); toggleLabel.className = 'gb17-cheat-toggle';
+    const enabled = document.createElement('input'); enabled.type = 'checkbox'; enabled.checked = !!cheat.enabled;
+    enabled.setAttribute('aria-label', `Attiva ${cheat.name}`);
+    const slider = document.createElement('span'); slider.className = 'gb17-toggle-slider'; slider.setAttribute('aria-hidden','true');
     enabled.addEventListener('change', async () => {
+      enabled.disabled = true;
       const result = await performFeature('toggle-cheat', { index, enabled: enabled.checked }, 'Cheat aggiornato.');
-      if (!result) enabled.checked = cheat.enabled;
+      if (!result) enabled.checked = !!cheat.enabled;
+      enabled.disabled = false;
     });
-    label.append(enabled, document.createTextNode(cheat.name));
-    const code = document.createElement('pre');
-    code.textContent = cheat.code;
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.className = 'alt';
-    remove.textContent = 'Elimina';
+    toggleLabel.append(enabled,slider);
+    const remove = document.createElement('button'); remove.type = 'button'; remove.className = 'gb17-cheat-delete';
+    remove.textContent = 'Elimina'; remove.setAttribute('aria-label', `Elimina ${cheat.name}`);
     remove.addEventListener('click', () => {
       if (confirm(`Eliminare il cheat "${cheat.name}"?`)) {
-        performFeature('delete-cheat', { index }, 'Cheat eliminato.');
+        void performFeature('delete-cheat', { index }, 'Cheat eliminato.');
       }
     });
-    item.append(label, code, remove);
-    list.append(item);
+    actions.append(toggleLabel,remove); item.append(info,actions); list.append(item);
   }
 }
 
@@ -1035,6 +1048,7 @@ function openGameMenu() {
   resetInput();
   gb13CloseSettings();
   gb15CloseSpeedPanel();
+  gb17CloseCheats();
   $('menu-title').textContent = $('game-title').textContent || 'Gioco in pausa';
   gameMenu.showModal();
   refreshFeatureControls();
@@ -1078,6 +1092,7 @@ gameMenu.addEventListener('cancel', (e) => {
   if (mappingAction) { e.preventDefault(); cancelRemap(); }
 });
 gameMenu.addEventListener('close', () => {
+  gb17CloseCheats();
   gb14CloseGallery();
   gb13CloseSettings();
   gb15CloseSpeedPanel();
@@ -1101,6 +1116,7 @@ function gb13CloseSettings() {
   $('gb13-settings-title').textContent = 'Impostazioni';
 }
 function gb13OpenSettings(title = 'Impostazioni', detailsId = null) {
+  gb17CloseCheats();
   gb14CloseGallery();
   gb15CloseSpeedPanel();
   gameMenu.classList.add('gb13-settings-open');
@@ -1126,8 +1142,32 @@ function gb13UpdateQuickAvailability() {
   $('gb13-quick-fast').setAttribute('aria-pressed', String(running && gb15SpeedEnabled));
 }
 $('gb13-settings-back').onclick = gb13CloseSettings;
-$('gb14-open-keys').onclick = () => gb13OpenSettings('Comandi e tastiera','keyboard-settings');
-$('gb13-quick-cheats').onclick = () => gb13OpenSettings('Codici Cheat','gb13-cheat-details');
+// UX17: Gaemboy cheat modal appearance, without React or any new core functions.
+function gb17ShowCheatForm(show) {
+  $('gb17-cheat-form').hidden = !show;
+  $('gb17-cheat-new').hidden = !!show;
+  if (show) $('cheat-name').focus({preventScroll:true});
+}
+function gb17CloseCheats() {
+  $('gb17-cheats-panel').hidden = true;
+  gb17ShowCheatForm(false);
+  $('gb13-pause-actions').hidden = false;
+  $('gb17-cheat-status').textContent = '';
+}
+async function gb17OpenCheats() {
+  gb14CloseGallery();
+  gb15CloseSpeedPanel();
+  gb13CloseSettings();
+  $('gb13-pause-actions').hidden = true;
+  $('gb17-cheats-panel').hidden = false;
+  gb17ShowCheatForm(false);
+  try { await performFeature('cheats'); }
+  catch (err) { $('gb17-cheat-status').textContent = 'Impossibile leggere i cheat: ' + (err.message || String(err)); }
+}
+$('gb13-quick-cheats').onclick = () => void gb17OpenCheats();
+$('gb17-cheats-back').onclick = gb17CloseCheats;
+$('gb17-cheat-new').onclick = () => gb17ShowCheatForm(true);
+$('gb17-cheat-cancel').onclick = () => gb17ShowCheatForm(false);
 // UX15 speed selection: slider and quick-toggle share the same worker pacing controller.
 function gb15CloseSpeedPanel() {
   $('gb15-speed-panel').hidden = true;
@@ -1138,6 +1178,7 @@ function gb15UpdateSpeedLabel() {
   $('gb15-speed-output').textContent = gb15SpeedText(Number($('gb15-speed-range').value));
 }
 $('gb13-quick-speed').onclick = () => {
+  gb17CloseCheats();
   gb14CloseGallery();
   gb13CloseSettings();
   $('gb13-pause-actions').hidden = true;
@@ -1374,6 +1415,7 @@ async function gb14RenderGallery() {
   }
 }
 async function gb14OpenGallery(mode) {
+  gb17CloseCheats();
   if (!storageAvailable || !memory || featureBusy) {
     gb13Feedback('Salvataggi non disponibili: verifica che il gioco sia in esecuzione.',true);
     return;
@@ -1411,6 +1453,8 @@ $('cheat-add').onclick = async () => {
     $('cheat-name').value = '';
     $('cheat-code').value = '';
     $('cheat-enabled').checked = false;
+    gb17ShowCheatForm(false);
+    $('gb17-cheat-status').textContent = 'Cheat aggiunto.';
   }
 };
 

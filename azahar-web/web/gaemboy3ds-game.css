@@ -421,3 +421,127 @@ body.playing #selection-footer {display:none!important;}
 @media(prefers-reduced-motion:reduce){
   #game-menu.gb13-pause .gb13-action,#game-menu.gb13-pause .gb16-menu-icon,#game-menu.gb13-pause .gb14-state-card {transition:none!important;}
 }
+
+/* GAEMBOY UX17 — CheatCodesModal appearance copied selectively from original
+   Gaemboy frontend. This is UI-only: the 3DS core still uses Gateway codes. */
+#game-menu.gb13-pause #close-menu.gb13-resume,
+#game-menu.gb13-pause #close-menu.gb13-resume:not(:disabled) {
+  color:#d61750!important;background:transparent!important;border:0!important;
+  font-size:17px;font-weight:700;letter-spacing:.5px;
+  transition:color .25s ease,transform .25s ease;
+}
+#game-menu.gb13-pause #close-menu.gb13-resume:hover:not(:disabled) {
+  color:#b01240!important;transform:translateY(-1px);
+}
+#game-menu.gb13-pause .gb17-cheat-panel {
+  width:min(100%,720px);margin:0 auto 8px;min-height:0;max-height:min(70dvh,650px);
+  display:flex;flex-direction:column;overflow:hidden;color:#fff;
+  background:rgba(28,28,30,.95);backdrop-filter:blur(30px) saturate(180%);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  border:1px solid rgba(255,255,255,.1);border-radius:20px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+#game-menu.gb13-pause .gb17-cheat-panel[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb17-cheat-header {
+  padding:18px 20px;display:flex;align-items:center;gap:14px;
+  border-bottom:1px solid rgba(255,255,255,.1);
+}
+#game-menu.gb13-pause .gb17-cheat-header h3 {margin:0;font-size:23px;font-weight:600;flex:1;}
+#game-menu.gb13-pause .gb17-cheat-header #gb17-cheat-count {font-size:12px;color:rgba(255,255,255,.62);}
+#game-menu.gb13-pause #gb17-cheats-back {
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);
+  color:#fff;padding:9px 13px;min-height:38px;border-radius:12px;font-size:14px;
+}
+#game-menu.gb13-pause #gb17-cheats-back:hover {background:rgba(255,255,255,.15);}
+#game-menu.gb13-pause .gb17-cheat-content {
+  display:flex;flex-direction:column;gap:12px;margin:0;padding:20px;border:0;
+  flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-user-select:text;user-select:text;
+}
+#game-menu.gb13-pause .gb17-cheat-content:disabled {opacity:.6;}
+#game-menu.gb13-pause #gb17-cheat-new,
+#game-menu.gb13-pause #cheat-add {
+  background:linear-gradient(135deg,#10b981 0%,#059669 100%);
+  color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:12px;
+  font-size:15px;font-weight:650;min-height:45px;padding:12px 18px;
+}
+#game-menu.gb13-pause #gb17-cheat-new {width:100%;margin:0 0 10px;}
+#game-menu.gb13-pause #gb17-cheat-new:hover:not(:disabled),
+#game-menu.gb13-pause #cheat-add:hover:not(:disabled) {box-shadow:0 8px 24px rgba(16,185,129,.32);transform:translateY(-1px);}
+#game-menu.gb13-pause .gb17-cheat-form {
+  display:flex;flex-direction:column;gap:9px;padding:18px;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
+  border-radius:16px;margin:0 0 10px;
+}
+#game-menu.gb13-pause .gb17-cheat-form[hidden],
+#game-menu.gb13-pause #gb17-cheat-new[hidden],
+#game-menu.gb13-pause #gb17-cheat-empty[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb17-cheat-form h4 {margin:0 0 6px;font-size:18px;font-weight:600;}
+#game-menu.gb13-pause .gb17-cheat-form > label {font-size:14px;color:rgba(255,255,255,.75);font-weight:500;}
+#game-menu.gb13-pause .gb17-cheat-form input:not([type="checkbox"]),
+#game-menu.gb13-pause .gb17-cheat-form textarea {
+  width:100%;box-sizing:border-box;margin:0;padding:11px 14px;
+  color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+  border-radius:10px;font-size:15px;font-weight:400;
+}
+#game-menu.gb13-pause .gb17-cheat-form textarea {font:13px/1.5 Monaco,Menlo,monospace;min-height:112px;resize:vertical;}
+#game-menu.gb13-pause .gb17-cheat-form input:focus,
+#game-menu.gb13-pause .gb17-cheat-form textarea:focus {outline:2px solid rgba(16,185,129,.45);outline-offset:1px;}
+#game-menu.gb13-pause .gb17-cheat-format {font-size:12px;color:rgba(255,255,255,.53);}
+#game-menu.gb13-pause .gb17-cheat-enabled-label {display:flex;align-items:center;gap:9px;margin:5px 0;}
+#game-menu.gb13-pause .gb17-cheat-enabled-label input {width:17px;height:17px;accent-color:#10b981;}
+#game-menu.gb13-pause .gb17-cheat-form-actions {display:flex;gap:10px;flex-wrap:wrap;}
+#game-menu.gb13-pause .gb17-cheat-form-actions button {flex:1;min-width:110px;}
+#game-menu.gb13-pause #gb17-cheat-cancel {
+  background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.15);
+  border-radius:10px;padding:12px 16px;min-height:43px;
+}
+#game-menu.gb13-pause .gb17-cheat-list {display:flex;flex-direction:column;gap:12px;}
+#game-menu.gb13-pause .gb17-cheat-item {
+  display:flex;align-items:center;justify-content:space-between;gap:15px;
+  padding:16px;border:1px solid rgba(255,255,255,.1);
+  border-radius:14px;background:rgba(255,255,255,.05);
+  transition:background .2s ease,border-color .2s ease;
+}
+#game-menu.gb13-pause .gb17-cheat-item:hover {background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.16);}
+#game-menu.gb13-pause .gb17-cheat-item.enabled {background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.5);}
+#game-menu.gb13-pause .gb17-cheat-info {flex:1;min-width:0;}
+#game-menu.gb13-pause .gb17-cheat-name {display:block;font-size:16px;font-weight:600;overflow-wrap:anywhere;}
+#game-menu.gb13-pause .gb17-cheat-details {display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;}
+#game-menu.gb13-pause .gb17-cheat-code {
+  font:12px/1.4 Monaco,Menlo,monospace;color:rgba(255,255,255,.62);
+  background:rgba(0,0,0,.2);padding:3px 8px;border-radius:6px;
+  overflow-wrap:anywhere;white-space:pre-wrap;max-height:90px;overflow:auto;
+}
+#game-menu.gb13-pause .gb17-cheat-type {font-size:12px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);padding:3px 8px;border-radius:6px;}
+#game-menu.gb13-pause .gb17-cheat-row-actions {display:flex;align-items:center;gap:10px;flex:none;}
+#game-menu.gb13-pause .gb17-cheat-toggle {display:inline-block;position:relative;width:51px;height:31px;flex:none;cursor:pointer;}
+#game-menu.gb13-pause .gb17-cheat-toggle input {opacity:0;position:absolute;inset:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1;}
+#game-menu.gb13-pause .gb17-toggle-slider {position:absolute;inset:0;border-radius:31px;background:rgba(255,255,255,.2);transition:background .2s ease;}
+#game-menu.gb13-pause .gb17-toggle-slider:before {
+  content:"";position:absolute;width:27px;height:27px;left:2px;bottom:2px;background:#fff;
+  border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:transform .2s ease;
+}
+#game-menu.gb13-pause .gb17-cheat-toggle input:checked + .gb17-toggle-slider {background:#10b981;}
+#game-menu.gb13-pause .gb17-cheat-toggle input:checked + .gb17-toggle-slider:before {transform:translateX(20px);}
+#game-menu.gb13-pause .gb17-cheat-toggle input:focus-visible + .gb17-toggle-slider {outline:2px solid #fff;outline-offset:3px;}
+#game-menu.gb13-pause .gb17-cheat-delete {
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+  border-radius:10px;color:#ff9e99;font-size:12px;padding:8px 10px;min-height:36px;
+}
+#game-menu.gb13-pause .gb17-cheat-delete:hover:not(:disabled) {background:rgba(255,69,58,.12);}
+#game-menu.gb13-pause .gb17-cheat-empty {margin:18px 0;text-align:center;color:rgba(255,255,255,.65);font-size:15px;}
+#game-menu.gb13-pause .gb17-cheat-empty small {display:block;margin-top:6px;font-size:13px;color:rgba(255,255,255,.43);}
+#game-menu.gb13-pause .gb17-cheat-status {font-size:13px;color:#ffd2e6;margin:0 20px 15px;min-height:0;}
+@media(max-width:600px) {
+  #game-menu.gb13-pause .gb17-cheat-panel {max-height:min(78dvh,730px);border-radius:16px;}
+  #game-menu.gb13-pause .gb17-cheat-header {padding:13px;gap:8px;}
+  #game-menu.gb13-pause .gb17-cheat-header h3 {font-size:18px;}
+  #game-menu.gb13-pause .gb17-cheat-content {padding:13px;}
+  #game-menu.gb13-pause .gb17-cheat-item {padding:12px;flex-wrap:wrap;}
+  #game-menu.gb13-pause .gb17-cheat-row-actions {margin-left:auto;}
+  #game-menu.gb13-pause .gb17-cheat-name {font-size:15px;}
+}
+@media(prefers-reduced-motion:reduce) {
+  #game-menu.gb13-pause .gb17-cheat-item,#game-menu.gb13-pause .gb17-toggle-slider,#game-menu.gb13-pause .gb17-toggle-slider:before {transition:none!important;}
+}

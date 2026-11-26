@@ -53,12 +53,13 @@ test('gallery has screenshot cards and requires click-to-save/load, no auto-over
   assert.match(page,/slots\.find\(x => !x\.exists\)/);
   assert.match(css,/\.gb14-state-preview img/);
 });
-test('settings tile removed, keyboard link and original menu actions remain',()=>{
+test('settings tile and Tasti shortcut removed, while save actions and keyboard settings remain',()=>{
   assert.doesNotMatch(html,/id="gb13-quick-settings"/);
-  assert.match(html,/id="gb14-open-keys"/);
+  assert.doesNotMatch(html,/id="gb14-open-keys"/);
+  assert.doesNotMatch(page,/\$\('gb14-open-keys'\)/);
+  assert.match(html,/id="keyboard-settings"/);
   assert.match(html,/id="gb13-quick-save"/);
   assert.match(html,/id="gb13-quick-load"/);
-  assert.match(page,/gb13OpenSettings\('Comandi e tastiera','keyboard-settings'\)/);
 });
 
 test('worker: create, list, load and delete a historical state with its preview', async()=>{

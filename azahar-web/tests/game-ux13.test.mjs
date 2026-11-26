@@ -61,10 +61,9 @@ test('Gaemboy black pause screen and plum bottom action tray, not a popup settin
 });
 test('quick actions open history galleries and preserve existing core controls',()=>{
  const {get,context}=localMenu();
- get('gb14-open-keys').onclick();
- assert.equal(get('gb13-settings-panel').hidden,false);
- get('gb13-settings-back').onclick();
- assert.equal(get('gb13-settings-panel').hidden,true);
+ assert.match(html,/id="gb17-cheats-panel"/);
+ assert.doesNotMatch(html,/id="gb14-open-keys"/);
+ assert.match(page,/function gb17OpenCheats\(/);
  assert.match(page,/\$\('gb13-quick-save'\)\.onclick = \(\) => \{ void gb14OpenGallery\('save'\)/);
  assert.match(page,/\$\('gb13-quick-load'\)\.onclick = \(\) => \{ void gb14OpenGallery\('load'\)/);
  assert.match(page,/gb15ApplySpeed\(\)/);
@@ -81,9 +80,9 @@ test('keyboard remapping remains secondary and Escape stays reserved',()=>{
  assert.match(page,/localStorage\.setItem\(STORAGE_KEY/);
 });
 test('UX14 assets and metadata are versioned independently of home/cache',()=>{
- assert.match(html,/name="gaemboy-build" content="game-ui16"/);
- assert(html.includes('gaemboy3ds-game.css?v=16'));
- assert(html.includes('gaemboy3ds-page.js?v=15'));
+ assert.match(html,/name="gaemboy-build" content="game-ui17"/);
+ assert(html.includes('gaemboy3ds-game.css?v=17'));
+ assert(html.includes('gaemboy3ds-page.js?v=17'));
  assert(html.includes('gaemboy3ds-game.js?v=13'));
  assert.match(html,/home-v5\.js\?v=10/);
 });
