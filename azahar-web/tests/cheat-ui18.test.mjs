@@ -51,5 +51,5 @@ test('save only after frontend validation and native core dry run',()=>{
  assert.match(submit,/if \(!validation\.ok\)/);
  assert.match(submit,/if \(!preflight\)/);
  assert.match(js,/function gb18RefreshCheatValidation\(/);
- assert.match(html,/game-ui18/);
+ assert.match(html,/game-ui20/);
 });

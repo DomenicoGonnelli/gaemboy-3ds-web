@@ -1084,6 +1084,10 @@ window.addEventListener('keydown', (event) => {
     renderKeyboardBindings();
     return;
   }
+  if (document.body.classList.contains('gb20-edit-mode') && event.code === 'Escape') {
+    event.preventDefault(); event.stopImmediatePropagation();
+    window.dispatchEvent(new Event('gaemboy3ds:layout-cancel')); return;
+  }
   if (event.code !== 'Escape' || !document.body.classList.contains('playing')) return;
   event.preventDefault();
   event.stopImmediatePropagation();
@@ -1704,6 +1708,19 @@ function pointer(e, down) {
   writeI('pointerY', coordinate(e.clientY, r.top, r.height));
   if (down !== undefined) writeI('pointerDown', down ? 1 : 0);
 }
+// UX19: translate touches on the split lower-screen preview into Azahar's
+// original 400x480 pointer space, without changing the core or canvas input.
+window.Gaemboy3DSTouchBridge = Object.freeze({
+  pointer(x, y, down) {
+    if (!memory || gameMenu.open || readI('status') !== 2) return false;
+    const clamp = v => Math.max(-1,Math.min(1,v));
+    writeI('pointerX',Math.round(clamp(x*2-1)*0x7fff));
+    writeI('pointerY',Math.round(clamp(y*2-1)*0x7fff));
+    if (down !== undefined) writeI('pointerDown',down?1:0);
+    return true;
+  },
+  release() { if (memory) writeI('pointerDown',0); }
+});
 canvas.addEventListener('pointerdown', (e) => {
   if (screenPointer !== null || !memory || gameMenu.open || readI('status') !== 2) return;
   e.preventDefault();

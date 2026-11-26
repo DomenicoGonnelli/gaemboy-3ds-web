@@ -1,4 +1,3 @@
-GAEMBOY 3DS Web — Gameplay UX18 (Centered cheat dialog and validated Gateway input)
+GAEMBOY 3DS Mobile Gameplay UX20
 Branch: feature/gaemboy-3ds-home-v2
-Base: UX17B
-Gateway-only 3DS core; unsupported formats disabled; live syntax validation and core dry-run check before saving.
+Smartphone portrait/landscape, tablet and vertical foldable layout with lower thumb controls; native core and menu unchanged.

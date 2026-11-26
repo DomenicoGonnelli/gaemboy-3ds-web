@@ -80,9 +80,9 @@ test('keyboard remapping remains secondary and Escape stays reserved',()=>{
  assert.match(page,/localStorage\.setItem\(STORAGE_KEY/);
 });
 test('UX14 assets and metadata are versioned independently of home/cache',()=>{
- assert.match(html,/name="gaemboy-build" content="game-ui18"/);
+ assert.match(html,/name="gaemboy-build" content="game-ui20"/);
  assert(html.includes('gaemboy3ds-game.css?v=18'));
- assert(html.includes('gaemboy3ds-page.js?v=18'));
+ assert(html.includes('gaemboy3ds-page.js?v=20'));
  assert(html.includes('gaemboy3ds-game.js?v=13'));
  assert.match(html,/home-v5\.js\?v=10/);
 });
