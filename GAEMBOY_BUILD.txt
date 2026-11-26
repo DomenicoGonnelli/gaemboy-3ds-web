@@ -1,0 +1,3 @@
+GAEMBOY 3DS Mobile Gameplay UX20
+Branch: feature/gaemboy-3ds-home-v2
+Smartphone portrait/landscape, tablet and vertical foldable layout with lower thumb controls; native core and menu unchanged.

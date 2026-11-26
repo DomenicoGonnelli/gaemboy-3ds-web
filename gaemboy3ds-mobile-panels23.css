@@ -1,0 +1,77 @@
+/* UX23 – compact save-state and speed panels on mobile, original Gaemboy palette.
+   The original menu and functionality are unchanged. */
+body.gb19-phone-portrait #game-menu.gb13-pause.gb23-mobile-detail,
+body.gb19-phone-landscape #game-menu.gb13-pause.gb23-mobile-detail {
+  overflow:hidden;
+}
+body.gb19-phone-portrait #game-menu.gb13-pause.gb23-mobile-detail .gb13-pause-hero,
+body.gb19-phone-landscape #game-menu.gb13-pause.gb23-mobile-detail .gb13-pause-hero {display:none;}
+body.gb19-phone-portrait #game-menu.gb13-pause.gb23-mobile-detail .gb13-pause-tray,
+body.gb19-phone-landscape #game-menu.gb13-pause.gb23-mobile-detail .gb13-pause-tray {
+  flex:1 1 auto;display:flex;flex-direction:column;min-height:0;max-height:100dvh;
+  box-sizing:border-box;overflow:hidden;padding:10px max(7px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(7px,env(safe-area-inset-left));
+}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-gallery,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-gallery {
+  width:100%;max-width:none;max-height:none;min-height:0;flex:1 1 auto;
+  margin:0;padding:3px 2px 14px;overflow-x:hidden;overflow-y:auto;
+  box-sizing:border-box;-webkit-overflow-scrolling:touch;
+}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-gallery-list,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-gallery-list {
+  display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;
+}
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-gallery-list {grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-card,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-card {min-width:0;width:100%;max-width:100%;box-sizing:border-box;border-radius:10px;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-preview,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-preview {aspect-ratio:auto;height:clamp(86px,24vw,125px);min-height:0;}
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-preview {height:clamp(64px,14vh,95px);}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-preview img,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-preview img {width:100%;height:100%;object-fit:contain;background:#0c0910;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-details,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-details {padding:7px 7px 4px;gap:3px;min-width:0;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-details strong,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-details strong {font-size:clamp(11px,3vw,13px);line-height:1.2;overflow-wrap:anywhere;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-details small,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-details small {font-size:10px;line-height:1.25;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-actions,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-actions {display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px;padding:5px 6px 7px;align-items:stretch;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-actions button,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-actions button {width:100%;min-width:0;min-height:40px;box-sizing:border-box;padding:6px 4px;font-size:clamp(10px,2.7vw,12px);line-height:1.1;white-space:normal;overflow-wrap:normal;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-state-actions button.gb14-delete,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-state-actions button.gb14-delete {padding-inline:5px;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb14-gallery-head,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb14-gallery-head {gap:6px;flex-wrap:wrap;margin-bottom:9px;}
+body.gb19-phone-portrait #game-menu.gb13-pause #gb14-gallery-count,
+body.gb19-phone-landscape #game-menu.gb13-pause #gb14-gallery-count {font-size:10px;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb15-speed-panel,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb15-speed-panel {
+  flex:1 1 auto;min-height:0;max-height:100%;width:100%;padding:4px 2px 10px;margin:0;
+  overflow-y:auto;overflow-x:hidden;box-sizing:border-box;-webkit-overflow-scrolling:touch;
+}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb15-speed-heading,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb15-speed-heading {gap:8px;margin-bottom:8px;flex-wrap:wrap;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb15-speed-heading h3,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb15-speed-heading h3 {font-size:1rem;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb15-speed-body,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb15-speed-body {padding:clamp(10px,3vw,15px);gap:8px;min-width:0;box-sizing:border-box;}
+body.gb19-phone-portrait #game-menu.gb13-pause #gb15-speed-output,
+body.gb19-phone-landscape #game-menu.gb13-pause #gb15-speed-output {font-size:clamp(1.65rem,7vw,2rem);}
+body.gb19-phone-portrait #game-menu.gb13-pause #gb15-speed-range,
+body.gb19-phone-landscape #game-menu.gb13-pause #gb15-speed-range {
+  width:100%;min-width:0;min-height:44px;box-sizing:border-box;
+  margin:0;touch-action:pan-x;
+}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb15-speed-labels,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb15-speed-labels {font-size:10px;gap:2px;}
+body.gb19-phone-portrait #game-menu.gb13-pause .gb15-speed-body p,
+body.gb19-phone-landscape #game-menu.gb13-pause .gb15-speed-body p {font-size:11px;line-height:1.32;}
+body.gb19-phone-portrait #game-menu.gb13-pause #gb15-speed-apply,
+body.gb19-phone-portrait #game-menu.gb13-pause #gb15-speed-default,
+body.gb19-phone-landscape #game-menu.gb13-pause #gb15-speed-apply,
+body.gb19-phone-landscape #game-menu.gb13-pause #gb15-speed-default {min-height:42px;padding:9px 12px;margin:0;}
+@media(max-height:440px) {
+  body.gb19-phone-landscape #game-menu.gb13-pause .gb13-tray-top {min-height:22px;padding-bottom:4px;}
+  body.gb19-phone-landscape #game-menu.gb13-pause .gb15-speed-heading {margin-bottom:4px;}
+}

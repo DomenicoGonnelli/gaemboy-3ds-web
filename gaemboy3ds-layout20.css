@@ -1,0 +1,43 @@
+/* GAEMBOY UX20 — editor responsive per schermi e comandi; no core changes. */
+body.gb20-custom #game-view { position:relative!important; min-height:100dvh; isolation:isolate; }
+body.gb20-custom #game-view .gb3-console,
+body.gb20-custom #game-view .gb3-console-base {position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;display:block!important;margin:0!important;padding:0!important;overflow:visible!important;}
+body.gb20-custom #game-view .stage {position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;min-height:0!important;padding:0!important;display:block!important;overflow:visible!important;}
+body.gb20-custom #game-view .gb19-screen-pair {position:absolute!important;inset:0!important;display:block!important;width:100%!important;height:100%!important;max-width:none!important;max-height:none!important;}
+body.gb20-custom #game-view .gb19-view {position:absolute!important;aspect-ratio:auto!important;overflow:hidden!important;touch-action:none;}
+body.gb20-custom #game-view .gb19-view canvas {width:100%!important;height:100%!important;object-fit:fill;}
+body.gb20-custom #game-view #screen {position:absolute!important;width:1px!important;height:1px!important;opacity:0!important;pointer-events:none!important;}
+body.gb20-custom #game-view #touch-controls:not([hidden]) {position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;display:block!important;padding:0!important;margin:0!important;pointer-events:none!important;z-index:3;}
+body.gb20-custom #touch-controls .shoulders,
+body.gb20-custom #touch-controls .control-deck {position:absolute!important;inset:0!important;width:100%!important;height:100%!important;max-width:none!important;display:block!important;pointer-events:none!important;margin:0!important;padding:0!important;}
+body.gb20-custom #touch-controls .shoulders button {pointer-events:auto!important;display:block!important;}
+body.gb20-custom #touch-controls .control-deck > *,
+body.gb20-custom #touch-controls .shoulders > * {pointer-events:auto;}
+body.gb20-custom #touch-controls .button-cross {display:grid!important;grid-template:repeat(3,var(--k))/repeat(3,var(--k))!important;justify-items:stretch;align-items:stretch;}
+body.gb20-custom #touch-controls .button-cross button {width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;}
+body.gb20-custom #touch-controls .system-buttons {display:grid!important;gap:4px!important;pointer-events:auto!important;}
+body.gb20-custom #touch-controls .system-buttons button {width:100%!important;height:auto!important;min-height:0!important;}
+body.gb20-custom #game-view .gb13-play-header {position:absolute!important;inset:0!important;height:0!important;width:0!important;display:contents!important;}
+body.gb20-custom #game-view #open-menu {pointer-events:auto!important;display:flex!important;align-items:center;justify-content:center;z-index:9;white-space:nowrap;}
+body.gb20-edit-mode #touch-controls {pointer-events:none!important;}
+body.gb20-edit-mode #touch-controls button,body.gb20-edit-mode #touch-controls .stick,body.gb20-edit-mode #game-view .gb19-view {pointer-events:none!important;}
+#game-view .gb20-editor-overlay[hidden]{display:none!important;}
+#game-view .gb20-editor-overlay {position:absolute;inset:0;z-index:35;pointer-events:none;touch-action:none;}
+#game-view .gb20-toolbar {position:fixed;z-index:38;top:max(12px,env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:min(96vw,830px);display:flex;align-items:center;justify-content:center;gap:8px;padding:9px;border:1px solid #a14368;border-radius:16px;background:rgba(39,9,32,.96);box-shadow:0 8px 34px #0008;pointer-events:auto;color:#fff;}
+#game-view .gb20-caption {flex:1;min-width:0;color:#ffc4da;font-size:.81rem;font-weight:650;}
+#game-view .gb20-toolbar button {border-radius:10px;border:1px solid #944164;background:#381528;color:#fff;padding:9px 12px;font-size:.82rem;min-height:35px;cursor:pointer;}
+#game-view .gb20-toolbar .gb20-save {background:#d61750;border-color:#eb5281;font-weight:800;}
+#game-view .gb20-frames {position:absolute;inset:0;z-index:36;pointer-events:none;}
+#game-view .gb20-frame {position:absolute;box-sizing:border-box;border:2px dashed #f6a5c3;border-radius:10px;box-shadow:inset 0 0 0 1px #3b0626,0 0 0 1px #24051e80;background:rgba(210,23,80,.06);cursor:grab;touch-action:none;pointer-events:auto;user-select:none;}
+#game-view .gb20-frame:active {cursor:grabbing;}
+#game-view .gb20-label {position:absolute;top:0;left:0;max-width:100%;padding:3px 6px;border-radius:0 0 8px 0;background:#9d154a;color:#fff;font-size:clamp(9px,1.5vw,12px);line-height:1.2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;pointer-events:none;}
+#game-view .gb20-handle {position:absolute;bottom:-4px;right:-4px;width:22px;height:22px;border-radius:6px;border:2px solid #fff;background:#e11961;cursor:nwse-resize;touch-action:none;}
+#game-view .gb20-handle::after {content:'↘';position:absolute;inset:0;text-align:center;color:#fff;font-size:13px;font-weight:900;}
+#game-view .gb20-frame:focus-visible {outline:3px solid #fff;outline-offset:2px;}
+@media(max-width:580px){#game-view .gb20-caption {font-size:0;flex:0;}
+ #game-view .gb20-caption::after {content:'Modifica layout';font-size:.75rem;}
+ #game-view .gb20-toolbar {gap:5px;}
+ #game-view .gb20-toolbar button {padding:7px 9px;font-size:.74rem;}
+ #game-view .gb20-label {font-size:9px;max-width:calc(100% - 10px);}}
+
+body.gb20-custom.gb3-input-desktop #game-view #touch-controls {display:none!important;}

@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#111418">
+<meta name="format-detection" content="telephone=no">
+<title>Gaemboy 3DS — Libreria</title>
+<link rel="icon" type="image/png" href="./home-v5-assets/logo.png?v=10" sizes="512x512">
+<link rel="apple-touch-icon" href="./home-v5-assets/logo.png?v=10">
+<link rel="stylesheet" href="./gaemboy3ds-ui.css?v=10">
+  <link rel="stylesheet" href="home-v5.css?v=10">
+  <link rel="stylesheet" href="home-v5-5.css?v=10">
+<link rel="stylesheet" href="./gaemboy3ds-game.css?v=18">
+<link rel="stylesheet" href="./gaemboy3ds-mobile19.css?v=20">
+<link rel="stylesheet" href="./gaemboy3ds-layout20.css?v=20">
+<link rel="stylesheet" href="./gaemboy3ds-menu21.css?v=21">
+<link rel="stylesheet" href="./gaemboy3ds-mobile-panels23.css?v=23">
+<meta name="gaemboy-build" content="game-ui20"><meta name="gaemboy-ux-fix" content="pause-responsive-23">
+</head>
+<body>
+<main>
+<section id="selection-view" aria-labelledby="selection-title">
+<h1 id="selection-title">GAEMBOY 3DS</h1>
+<p class="sub">Scegli un gioco. Resta sul tuo dispositivo, nessun upload.</p>
+<div class="selection-actions">
+  <button id="pick" type="button">+ Aggiungi gioco</button><input id="file" type="file" accept=".3ds,.cci,.cxi,.app,.3dsx,.elf" multiple>
+  
+</div>
+<section id="library" aria-label="Libreria giochi" hidden>
+  <h2>Libreria</h2>
+  <div id="library-actions">
+    <button id="lib-refresh" type="button" class="alt" hidden>Aggiorna</button>
+    <button id="lib-forget" type="button" class="alt" hidden>Dimentica cartella</button>
+    <input id="lib-filter" type="search" placeholder="Cerca" aria-label="Cerca nella libreria" hidden>
+    <div id="lib-status" role="status" aria-live="polite"></div>
+    <ul id="lib-list"></ul>
+  </div>
+</section>
+<div class="demo-picker" hidden aria-hidden="true">
+  <h2>Demo</h2>
+  <button id="demo3d" type="button" class="alt" data-file="craftus_reloaded.3dsx">Craftus Reloaded (3D)</button>
+  <button id="demo" type="button" class="alt" data-file="SuperHaxagon.3dsx">Super Haxagon (2D)</button>
+</div>
+</section>
+<section id="game-view" aria-label="Gioco" hidden>
+  <header class="game-header gb13-play-header">
+    <h1 id="game-title" class="sr-only">Gioco</h1>
+    <button id="open-menu" type="button" class="alt gb3-menu-button" aria-haspopup="dialog" aria-controls="game-menu" aria-label="Apri menu di pausa">Menu</button>
+  </header>
+  <div class="gb3-console" id="gb3-console" aria-label="Console 3DS">
+    <div class="gb3-console-base">
+      <div class="stage">
+        <canvas id="screen" width="400" height="480" tabindex="-1" aria-label="Schermo superiore e inferiore del Nintendo 3DS"></canvas>
+        <p id="game-status" role="status">Caricamento…</p>
+      </div>
+<fieldset id="touch-controls" disabled aria-label="Comandi touch">
+    <legend class="sr-only">Comandi touch</legend>
+    <div class="shoulders">
+      <button type="button" data-button="10">L</button>
+      <button type="button" data-button="12">ZL</button>
+      <button type="button" data-button="13">ZR</button>
+      <button type="button" data-button="11">R</button>
+    </div>
+    <div class="control-deck">
+      <div class="stick" data-stick="left" role="group" aria-label="Circle Pad: trascina per muoverti"><span class="stick-knob"></span></div>
+      <div class="system-buttons">
+        <button type="button" data-button="2">Select</button>
+        <button type="button" data-button="3">Start</button>
+      </div>
+      <div class="stick cstick" data-stick="right" role="group" aria-label="C-Stick: trascina per muovere la visuale"><span class="stick-knob"></span></div>
+      <div class="button-cross dpad" role="group" aria-label="Croce direzionale">
+        <button type="button" class="north" data-button="4" aria-label="Su">↑</button>
+        <button type="button" class="west" data-button="6" aria-label="Sinistra">←</button>
+        <button type="button" class="east" data-button="7" aria-label="Destra">→</button>
+        <button type="button" class="south" data-button="5" aria-label="Giù">↓</button>
+      </div>
+      <div class="button-cross face-buttons" role="group" aria-label="Pulsanti azione">
+        <button type="button" class="north" data-button="9">X</button>
+        <button type="button" class="west" data-button="1">Y</button>
+        <button type="button" class="east" data-button="8">A</button>
+        <button type="button" class="south" data-button="0">B</button>
+      </div>
+    </div>
+  </fieldset>
+    </div>
+  </div>
+  <p class="gb3-game-help">Usa tastiera o controller. Premi <kbd>Esc</kbd> per le impostazioni.</p>
+</section>
+<div id="notice" role="status" hidden></div>
+</main>
+<dialog id="game-menu" class="gb13-pause" aria-labelledby="menu-title">
+  <div class="gb13-pause-hero" id="gb13-pause-hero">
+    <div class="gb13-pause-caption" aria-hidden="true">Ⅱ</div>
+    <h2 id="menu-title">Gioco in pausa</h2>
+  </div>
+  <div class="gb13-pause-tray">
+    <div class="gb13-tray-top"><span class="gb13-tray-subtitle">MENU DI PAUSA</span><button id="close-menu" type="button" class="gb13-resume" autofocus>Riprendi</button></div>
+    <div id="gb13-pause-actions" class="gb13-pause-actions" role="group" aria-label="Azioni di gioco">
+      <button type="button" id="gb13-quick-save" class="gb13-action" aria-label="Salvataggio rapido"><img class="gb16-menu-icon" src="./gaemboy-menu-icons/save.png" alt="" loading="eager" decoding="async"><span>Salvataggio<br>Rapido</span></button>
+      <button type="button" id="gb13-quick-load" class="gb13-action" aria-label="Caricamento rapido"><img class="gb16-menu-icon" src="./gaemboy-menu-icons/load.png" alt="" loading="eager" decoding="async"><span>Caricamento<br>Rapido</span></button>
+      <button type="button" id="gb13-quick-cheats" class="gb13-action" ><img class="gb16-menu-icon" src="./gaemboy-menu-icons/cheatcodes.png" alt="" loading="eager" decoding="async"><span>Codici<br>Cheat</span></button>
+      <button type="button" id="gb13-quick-fast" class="gb13-action" aria-pressed="false"><img class="gb16-menu-icon" src="./gaemboy-menu-icons/fastforward.png" alt="" loading="eager" decoding="async"><span>Velocità<br>Aumentata</span></button>
+      <button type="button" id="gb13-quick-speed" class="gb13-action" ><img class="gb16-menu-icon" src="./gaemboy-menu-icons/setspeed.png" alt="" loading="eager" decoding="async"><span>Imposta<br>Velocità</span></button>
+      <button type="button" id="gb13-quick-screenshot" class="gb13-action" ><img class="gb16-menu-icon" src="./gaemboy-menu-icons/screenshot.png" alt="" loading="eager" decoding="async"><span>Esegui<br>Screenshot</span></button>
+      <button type="button" id="gb20-quick-layout" class="gb13-action" aria-label="Riposiziona schermi e controlli"><img class="gb16-menu-icon" src="./gaemboy-menu-icons/resize.png" alt="" loading="eager"><span>Riposiziona</span></button>
+      <button type="button" id="gb13-quick-mic" class="gb13-action" ><img class="gb16-menu-icon" src="./gaemboy-menu-icons/mic.png" alt="" loading="eager" decoding="async"><span>Attiva<br>Microfono</span></button>
+      <button type="button" id="gb13-quick-link" class="gb13-action" disabled="disabled" title="Collegamento non disponibile sul core 3DS"><img class="gb16-menu-icon" src="./gaemboy-menu-icons/link.png" alt="" loading="eager" decoding="async"><span>Collega</span></button>
+      <button type="button" id="gb13-quick-exit" class="gb13-action" ><img class="gb16-menu-icon" src="./gaemboy-menu-icons/close.png" alt="" loading="eager" decoding="async"><span>Chiudi<br>gioco</span></button>
+    </div>
+    <section id="gb15-speed-panel" class="gb15-speed-panel" aria-labelledby="gb15-speed-title" hidden>
+      <div class="gb15-speed-heading">
+        <button id="gb15-speed-back" type="button">← Menu</button>
+        <h3 id="gb15-speed-title">Imposta velocità</h3>
+      </div>
+      <div class="gb15-speed-body">
+        <div class="gb15-speed-value"><output id="gb15-speed-output" for="gb15-speed-range">2,0×</output><span>Velocità richiesta</span></div>
+        <label for="gb15-speed-range">Regola la velocità da 0,5× a 8×</label>
+        <input type="range" id="gb15-speed-range" min="0.5" max="8" step="0.5" value="2" list="gb15-speed-markers">
+        <datalist id="gb15-speed-markers"><option value="0.5" label="0,5×"></option><option value="1" label="1×"></option><option value="2" label="2×"></option><option value="4" label="4×"></option><option value="8" label="8×"></option></datalist>
+        <div class="gb15-speed-labels"><span>0,5×</span><span>1×</span><span>2×</span><span>4×</span><span>8×</span></div>
+        <p>Questa è la velocità richiesta. La velocità effettiva dipende dalle prestazioni del dispositivo: 8× non è garantito.</p>
+        <button id="gb15-speed-apply" type="button">Applica velocità</button>
+        <button id="gb15-speed-default" type="button">Ripristina 1×</button>
+      </div>
+    </section>
+    <section id="gb14-state-gallery" class="gb14-gallery" aria-labelledby="gb14-gallery-title" hidden>
+      <div class="gb14-gallery-head"><button id="gb14-gallery-back" type="button">← Menu</button><h3 id="gb14-gallery-title">Salvataggi rapidi</h3><span id="gb14-gallery-count"></span></div>
+      <div id="gb14-gallery-list" class="gb14-gallery-list"></div>
+      <p id="gb14-gallery-message" role="status" aria-live="polite"></p>
+    </section>
+    <!-- UX17: CheatCodesModal appearance from Gaemboy; the existing 3DS Gateway handlers remain the backend. -->
+    <section id="gb17-cheats-panel" class="gb17-cheat-panel" aria-labelledby="gb17-cheat-title" hidden>
+      <header class="gb17-cheat-header">
+        <button id="gb17-cheats-back" type="button" class="gb17-cheat-back">← Indietro</button>
+        <h3 id="gb17-cheat-title">Codici Cheat</h3>
+        <span id="gb17-cheat-count" aria-live="polite"></span>
+      </header>
+      <fieldset id="cheat-actions" class="gb17-cheat-content" disabled>
+        <button id="gb17-cheat-new" type="button" class="gb17-add-cheat">+ Nuovo cheat</button>
+        <div id="gb17-cheat-form" class="gb17-cheat-form" hidden>
+          <h4>Nuovo cheat</h4>
+          <label for="cheat-name">Nome</label>
+          <input id="cheat-name" maxlength="128" autocomplete="off" placeholder="Es. Oggetti infiniti">
+          <label for="gb18-cheat-type">Tipologia di cheat</label>
+          <select id="gb18-cheat-type" aria-describedby="gb18-cheat-type-hint">
+            <optgroup label="Supportati su Nintendo 3DS">
+              <option value="gateway">Gateway (3DS) — XXXXXXXX XXXXXXXX</option>
+            </optgroup>
+            <optgroup label="Non supportati dal core 3DS">
+              <option value="action-replay-ds" disabled>Action Replay (NDS) — non disponibile</option>
+              <option value="gameshark" disabled>GameShark (GBA/GBC) — non disponibile</option>
+              <option value="codebreaker" disabled>CodeBreaker (GBA) — non disponibile</option>
+              <option value="gamegenie" disabled>Game Genie — non disponibile</option>
+            </optgroup>
+          </select>
+          <span id="gb18-cheat-type-hint" class="gb17-cheat-format">Il core Azahar 3DS supporta soltanto Gateway. Gli altri formati sono disponibili su altre console Gaemboy.</span>
+          <label for="cheat-code">Codice Gateway</label>
+          <textarea id="cheat-code" rows="5" maxlength="65536" spellcheck="false" placeholder="XXXXXXXX XXXXXXXX (una istruzione per riga)"></textarea>
+          <span class="gb17-cheat-format">Il testo viene formattato automaticamente. Ogni istruzione richiede 8+8 cifre esadecimali.</span>
+          <p id="gb18-cheat-validation" class="gb18-cheat-validation" role="status" aria-live="polite"></p>
+          <label class="gb17-cheat-enabled-label"><input id="cheat-enabled" type="checkbox"> Attiva subito</label>
+          <div class="gb17-cheat-form-actions">
+            <button id="gb17-cheat-cancel" type="button" class="gb17-cheat-cancel">Annulla</button>
+            <button id="cheat-add" type="button" class="gb17-cheat-submit" disabled>Aggiungi cheat</button>
+          </div>
+        </div>
+        <div id="cheat-list" class="gb17-cheat-list" aria-live="polite"></div>
+        <p id="gb17-cheat-empty" class="gb17-cheat-empty">Nessun cheat aggiunto.<small>Premi “Nuovo cheat” per inserire un codice Gateway.</small></p>
+      </fieldset>
+      <p id="gb17-cheat-status" class="gb17-cheat-status" role="status" aria-live="polite"></p>
+    </section>
+    <p id="gb13-quick-status" role="status" aria-live="polite" class="gb13-quick-status"></p>
+    <div id="gb13-settings-panel" class="gb13-settings-panel" hidden>
+      <div class="gb13-settings-header"><button id="gb13-settings-back" type="button" class="alt">← Torna al menu</button><strong id="gb13-settings-title">Impostazioni</strong></div>
+      <div id="rom-info"></div>
+      <div class="gb13-settings-legacy-actions">
+  <div class="menu-actions gb3-quick-actions">
+    <button id="audio" type="button" class="alt"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 5 6 9H3v6h3l5 4V5Zm4 4a5 5 0 0 1 0 6m3-9a9 9 0 0 1 0 12"/></svg><span class="gb3-action-label">Audio: on</span></button>
+    <button id="throttle" type="button" class="alt" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 19a9 9 0 1 1 16 0M12 12l4-4M4 19h16"/></svg><span class="gb3-action-label">Velocità: 60 fps</span></button>
+    <button id="save" type="button" class="alt" disabled><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h13l3 3v15H3V3h2Zm2 0v7h10V3M7 21v-8h10v8"/></svg><span class="gb3-action-label">Salva ora</span></button>
+    <button id="back-library" type="button"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18-6-6 6-6M3 12h18"/></svg><span class="gb3-action-label">Cambia gioco</span></button>
+  </div>
+
+      </div>
+      <div id="menu-status" role="status" aria-live="polite"></div>
+  <section class="features" aria-label="Funzioni emulatore">
+  <div class="gb3-section-label">IMPOSTAZIONI E STRUMENTI</div>
+  <div id="feature-status" role="status" aria-live="polite"></div>
+  <details>
+    <summary><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h14l2 2v14H4V4Zm4 0v7h8V4M8 20v-7h8v7"/></svg><span>Stati e backup</span></summary>
+    <fieldset id="storage-actions" disabled>
+      <label for="state-slot">Slot</label>
+      <select id="state-slot">
+        <option value="1">Slot 1 — vuoto</option>
+        <option value="2">Slot 2 — vuoto</option>
+        <option value="3">Slot 3 — vuoto</option>
+      </select>
+      <div class="menu-actions">
+        <button id="state-save" type="button">Salva stato</button>
+        <button id="state-load" type="button" class="alt" disabled>Carica stato</button>
+        <button id="state-delete" type="button" class="alt" disabled>Elimina stato</button>
+        <button id="export-saves" type="button" class="alt">Esporta backup ZIP</button>
+      </div>
+    </fieldset>
+  </details>
+  <details id="keyboard-settings">
+    <summary><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M5 9h2m3 0h2m3 0h2M5 13h2m3 0h2m3 0h2M7 16h10"/></svg><span>Comandi e tastiera</span></summary>
+    <div class="gb3-settings-body">
+      <p class="gb3-settings-description">Clicca un tasto, poi premi il nuovo comando sulla tastiera. Le preferenze restano su questo dispositivo. Esc apre o chiude il menu.</p>
+      <div id="keyboard-bindings" aria-label="Mappatura della tastiera"></div>
+      <p id="keymap-status" role="status" aria-live="polite"></p>
+      <button type="button" class="alt" id="keyboard-reset">Ripristina tasti predefiniti</button>
+    </div>
+  </details>
+  <details>
+    <summary><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 11a7 7 0 0 0 14 0m-7 7v4m-4 0h8"/></svg><span>Microfono e fotocamera</span></summary>
+    <fieldset id="media-actions" disabled>
+      <button id="mic-toggle" type="button" class="alt">Attiva microfono</button>
+      <span id="mic-status">Disattivato</span><br>
+      <label for="camera-facing">Fotocamera</label>
+      <select id="camera-facing">
+        <option value="user">Frontale / webcam</option>
+        <option value="environment">Posteriore, se disponibile</option>
+      </select>
+      <button id="camera-toggle" type="button" class="alt">Attiva fotocamera</button>
+      <span id="camera-status">Disattivata</span>
+    </fieldset>
+  </details>
+  <details>
+    <summary><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-8 0v6"/></svg><span>Avanzate</span></summary>
+    <button id="dl-log" type="button" class="alt">Scarica log</button>
+    <table>
+      <tr><td>Stato</td><td id="s-status">—</td></tr>
+      <tr><td>Renderer</td><td id="s-renderer">—</td></tr>
+      <tr><td>Caricamento</td><td id="s-load">—</td></tr>
+      <tr><td>Frame emulati</td><td id="s-frames">—</td></tr>
+      <tr><td>FPS emulazione</td><td id="s-fps">—</td></tr>
+      <tr><td>Velocità (vs 3DS 59,83 fps)</td><td id="s-speed">—</td></tr>
+      <tr><td>Tempo per frame (media)</td><td id="s-ms">—</td></tr>
+      <tr><td>Dettaglio (ultimo secondo)</td><td id="s-perf">—</td></tr>
+      <tr><td>Audio</td><td id="s-audio">—</td></tr>
+      <tr><td>Input</td><td id="s-input">—</td></tr>
+      <tr><td>Salvataggi (IndexedDB)</td><td id="s-saves">—</td></tr>
+      <tr><td>Thread / memoria</td><td id="s-mem">—</td></tr>
+      <tr><td>Log del core</td><td id="s-log">—</td></tr>
+    </table>
+    <div class="keys">
+      <b>Tastiera</b>: <kbd>←↑→↓</kbd> D-pad · <kbd>X</kbd> A · <kbd>Z</kbd> B · <kbd>S</kbd> X · <kbd>A</kbd> Y ·
+      <kbd>Q</kbd>/<kbd>W</kbd> L/R · <kbd>E</kbd>/<kbd>R</kbd> ZL/ZR · <kbd>Invio</kbd> Start · <kbd>⌫</kbd> Select ·
+      <kbd>I J K L</kbd> Circle Pad · <kbd>T F G H</kbd> C-Stick
+    </div>
+    <div id="log"></div>
+  </details>
+  </section>
+
+      <p class="gb13-license"><a href="https://github.com/DomenicoGonnelli/gaemboy-3ds-web">Codice sorgente, GPL v3+</a></p>
+    </div>
+  </div>
+</dialog>
+<footer id="selection-footer">
+  Software libero sotto <a href="https://www.gnu.org/licenses/gpl-3.0.html">GNU GPL v3 o successiva</a> ·
+  <a id="source-link" href="https://github.com/DomenicoGonnelli/gaemboy-3ds-web">Codice sorgente</a> ·
+  basato su <a href="https://github.com/azahar-emu/azahar">Azahar</a>. Non affiliato a Nintendo; nessun gioco, BIOS o chiave incluso.
+</footer>
+<script>
+  // Static hosts without COOP/COEP headers: let coi-sw.js add them, then reload once under its control.
+  if (!window.crossOriginIsolated && window.isSecureContext && 'serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./coi-sw.js').then(() => {
+      if (!navigator.serviceWorker.controller && !sessionStorage.getItem('coi-reload')) {
+        sessionStorage.setItem('coi-reload', '1');
+        navigator.serviceWorker.ready.then(() => location.reload());
+      }
+    }).catch((err) => console.warn('coi-sw registration failed', err));
+  } else {
+    sessionStorage.removeItem('coi-reload');
+  }
+</script>
+<script defer src="./gaemboy3ds-game.js?v=13"></script>
+<script defer src="./gaemboy3ds-mobile19.js?v=20"></script>
+<script defer src="./gaemboy3ds-layout20.js?v=20"></script>
+<script type="module" src="./gaemboy3ds-page.js?v=20&audio22&pause23"></script>
+  <script defer src="home-v5-hash.js?v=10"></script>
+<script defer src="home-v5.js?v=10"></script>
+  <script defer src="home-v5-5.js?v=10"></script>
+</body>
+</html>

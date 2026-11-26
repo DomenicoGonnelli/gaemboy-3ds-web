@@ -1,0 +1,78 @@
+/* GAEMBOY 3DS UX21: all pause actions visible on phones, without a horizontal carousel.
+   Presentation only: keeps existing action IDs, event handlers, icons and modal panels.
+   Loaded AFTER gaemboy3ds-game.css, mobile19.css and layout20.css. */
+@media screen and (orientation:portrait) {
+  body.gb19-phone-portrait #game-menu.gb13-pause .gb13-pause-actions {
+    display:grid !important;
+    grid-template-columns:repeat(5,minmax(0,1fr));
+    align-items:stretch;
+    justify-content:stretch;
+    gap:6px;
+    width:100%;
+    padding:4px 0 7px;
+    overflow-x:visible !important;
+    overflow-y:visible !important;
+    scrollbar-width:none;
+  }
+  body.gb19-phone-portrait #game-menu.gb13-pause .gb13-pause-actions[hidden] {display:none !important;}
+  body.gb19-phone-portrait #game-menu.gb13-pause .gb13-pause-tray {
+    padding-inline:max(7px,env(safe-area-inset-left)) max(7px,env(safe-area-inset-right));
+  }
+  body.gb19-phone-portrait #game-menu.gb13-pause button.gb13-action,
+  body.gb19-phone-portrait #game-menu.gb13-pause button.gb13-action:not(:disabled) {
+    box-sizing:border-box;
+    width:100%;min-width:0;max-width:none;
+    flex:none;
+    min-height:72px;
+    padding:6px 2px;
+    gap:4px;
+    border-radius:11px;
+    font-size:clamp(9px,2.45vw,11px);
+    line-height:1.12;
+    overflow-wrap:anywhere;
+    hyphens:auto;
+  }
+  body.gb19-phone-portrait #game-menu.gb13-pause .gb13-action .gb16-menu-icon {
+    width:clamp(23px,7.1vw,30px);
+    height:clamp(23px,7.1vw,30px);
+  }
+}
+/* Landscape phones have little height but adequate width: all ten buttons in a row. */
+@media screen and (orientation:landscape) {
+  body.gb19-phone-landscape #game-menu.gb13-pause .gb13-pause-actions {
+    display:grid !important;
+    grid-template-columns:repeat(10,minmax(0,1fr));
+    align-items:stretch;
+    justify-content:stretch;
+    gap:4px;
+    width:100%;
+    padding:2px 0 5px;
+    overflow-x:visible !important;
+    overflow-y:visible !important;
+    scrollbar-width:none;
+  }
+  body.gb19-phone-landscape #game-menu.gb13-pause .gb13-pause-actions[hidden] {display:none !important;}
+  body.gb19-phone-landscape #game-menu.gb13-pause button.gb13-action,
+  body.gb19-phone-landscape #game-menu.gb13-pause button.gb13-action:not(:disabled) {
+    box-sizing:border-box;
+    width:100%;min-width:0;max-width:none;
+    flex:none;
+    min-height:64px;
+    padding:4px 1px;
+    gap:3px;
+    border-radius:9px;
+    font-size:clamp(8px,1.3vw,10px);
+    line-height:1.1;
+    overflow-wrap:anywhere;
+    hyphens:auto;
+  }
+  body.gb19-phone-landscape #game-menu.gb13-pause .gb13-action .gb16-menu-icon {
+    width:clamp(20px,3.2vw,27px);
+    height:clamp(20px,3.2vw,27px);
+  }
+}
+/* Short phone screens should keep the grid visible along with Riprendi. */
+@media screen and (max-height:620px) {
+  body.gb19-phone-landscape #game-menu.gb13-pause .gb13-pause-tray {padding-top:6px;padding-bottom:max(5px,env(safe-area-inset-bottom));}
+  body.gb19-phone-landscape #game-menu.gb13-pause .gb13-tray-top {min-height:22px;padding-bottom:3px;}
+}

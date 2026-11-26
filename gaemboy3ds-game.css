@@ -1,0 +1,580 @@
+/* Gaemboy 3DS - Gameplay UX 12. Independent presentation; same renderer and control IDs. */
+:root {
+  --g3-rose:#e01961; --g3-pink:#f18caf; --g3-ink:#20051c;
+  --g3-panel:#350d2c; --g3-panel-light:#481536;
+  --g3-border:#783052; --g3-label:#c6a8bb;
+}
+body[data-gb3-palette="violet"] {--g3-rose:#a04feb;--g3-pink:#d0b1ff;--g3-ink:#190a29;--g3-panel:#291337;--g3-panel-light:#38204d;--g3-border:#77508f;}
+body[data-gb3-palette="midnight"] {--g3-rose:#547bea;--g3-pink:#a8c4ff;--g3-ink:#0d1427;--g3-panel:#16233c;--g3-panel-light:#203451;--g3-border:#436082;}
+body.playing {
+  background:radial-gradient(ellipse at 50% 17%, #32102b 0%, var(--g3-ink) 62%, #110914 100%);
+  color:#fff;
+  padding:max(10px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));
+}
+body.playing main {max-width:none; height:100%;}
+body.playing #game-view {width:100%;max-width:1080px; margin:0 auto; gap:8px; min-height:0;}
+#game-view .game-header {width:100%;max-width:930px; min-height:47px; margin:0 auto; padding:2px 6px; gap:12px;}
+.gb3-game-identity {display:flex;align-items:center;gap:10px;min-width:0;flex:1;text-align:left;}
+.gb3-platform-label {padding:5px 10px;border-radius:9px;border:1px solid var(--g3-border);color:var(--g3-pink);font-size:.7rem;font-weight:800;letter-spacing:.12em;}
+.gb3-game-names {display:flex;flex-direction:column;gap:1px;min-width:0;}
+#game-view .game-header h1 {color:#fff;font-size:clamp(.88rem,1.8vw,1.08rem);margin:0;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.gb3-input-hint {color:var(--g3-label);font-size:.72rem;}
+#game-view .game-header .gb3-menu-button {min-height:39px;margin:0;display:flex;gap:8px;align-items:center;padding:8px 14px;border-radius:10px;border:1px solid var(--g3-border);background:var(--g3-panel);color:#fff;font-weight:700;}
+.gb3-esc-badge {border-radius:4px;background:#5a2648;color:var(--g3-pink);font-size:.7rem;padding:2px 5px;}
+.gb3-game-help {font-size:.73rem;color:var(--g3-label);text-align:center;margin:0 0 3px;}
+.gb3-game-help kbd {background:var(--g3-panel-light);color:#fff;}
+/* No console shell or decorative skin on either platform. */
+.gb3-console, .gb3-console-base {border:0; border-radius:0; box-shadow:none; background:transparent; padding:0; margin:0; width:100%;}
+.gb3-console {display:flex;flex-direction:column;flex:1 1 0;min-height:0; align-items:center; justify-content:center;gap:8px;}
+.gb3-console-base {display:flex;flex-direction:column;flex:1 1 0;align-items:center;justify-content:center;min-height:0;gap:8px;}
+.gb3-lid, .gb3-console-bottom {display:none!important;}
+#game-view .stage {width:100%;height:100%;flex:1 1 0;min-height:0;padding:0;margin:0; border:0;box-shadow:none;background:transparent;container-type:size;display:grid;place-items:center;}
+#game-view #screen {width:min(100cqw,calc(100cqh * 5 / 6));max-width:100%;height:auto;aspect-ratio:5 / 6;object-fit:contain;background:#000;border:1px solid rgba(241,140,175,.12);border-radius:5px;box-shadow:0 12px 34px rgba(0,0,0,.28);}
+#game-status {inset:0;}
+/* Desktop: screen only, played using keyboard/gamepad. Mobile: native touch controls below. */
+body.gb3-game-controls-hidden #touch-controls {display:none!important;}
+body.gb3-input-desktop #touch-controls:not([hidden]),body.gb3-input-mobile #touch-controls:not([hidden]) {flex:none;max-width:840px;}
+body.gb3-input-desktop #touch-controls:not([hidden]) {--k:clamp(31px,4.2vw,48px);}
+body.gb3-input-mobile #touch-controls:not([hidden]) {--k:clamp(34px,10vw,50px);}
+body.gb3-input-mobile .gb3-input-hint,body.gb3-input-mobile .gb3-game-help,body.gb3-input-mobile .gb3-esc-badge {display:none;}
+body.gb3-input-mobile #game-view {gap:4px;}
+body.gb3-input-mobile #game-view .game-header {min-height:39px;padding:0 2px;}
+body.gb3-input-mobile #game-view .game-header .gb3-menu-button {min-height:38px;}
+#touch-controls button {background:var(--g3-panel-light);border:1px solid var(--g3-border);color:#fff;}
+#touch-controls .pressed {background:var(--g3-rose)!important;}
+#touch-controls .face-buttons button {background:var(--g3-rose)!important;border-color:var(--g3-rose);}
+#touch-controls .face-buttons button.pressed {background:var(--g3-pink)!important;}
+#touch-controls .stick {border-color:var(--g3-border);background:#211324;}
+#touch-controls .stick-knob {background:#946e88;}
+@media(orientation:landscape) and (max-height:520px) {
+  body.gb3-input-desktop #game-view {display:flex;flex-direction:column;}
+  body.gb3-input-mobile #game-view {display:flex;flex-direction:column;}
+  body.gb3-input-mobile .gb3-console-base {display:grid;grid-template-columns:minmax(0,1fr) minmax(0,52%);gap:8px;align-items:center;}
+  body.gb3-input-mobile #game-view .stage {grid-column:1;grid-row:1;height:100%;}
+  body.gb3-input-mobile #touch-controls:not([hidden]) {grid-column:2;grid-row:1;--k:clamp(28px,8vh,43px);width:100%;}
+}
+/* Single menu hierarchy: quick actions and grouped features. Existing functionality intact. */
+#game-menu {width:min(calc(100vw - 28px),610px);max-height:calc(100dvh - 22px);padding:16px;border:1px solid var(--g3-border);border-radius:22px;color:#fff;background:linear-gradient(160deg,#390e2d,var(--g3-ink));box-shadow:0 22px 76px rgba(0,0,0,.7);}
+#game-menu::backdrop {background:rgba(8,1,12,.82);backdrop-filter:blur(5px);}
+#game-menu .game-header {position:sticky;top:-16px;z-index:3;margin:-16px -16px 12px;padding:17px 16px 13px;background:#280b24;border-bottom:1px solid rgba(241,140,175,.23);border-radius:22px 22px 0 0;}
+.gb3-menu-heading {display:flex;flex-direction:column;gap:2px;flex:1;text-align:left;}
+.gb3-menu-eyebrow {font-size:.65rem;font-weight:800;letter-spacing:.17em;color:var(--g3-pink);}
+#game-menu .gb3-menu-heading h2 {font-size:1.3rem;line-height:1.2;margin:0;color:#fff;}
+#game-menu #close-menu {width:40px;min-width:40px;height:40px;min-height:40px;padding:0;margin:0;background:var(--g3-panel-light);border:1px solid var(--g3-border);border-radius:12px;color:#fff;}
+#game-menu #rom-info {font-size:.77rem;color:var(--g3-label);margin:4px 0 14px;}
+.gb3-section-label {color:var(--g3-pink);font-size:.68rem;font-weight:800;letter-spacing:.14em;text-align:left;margin:12px 0 9px;}
+#game-menu .gb3-quick-actions {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:0 0 15px;}
+#game-menu .gb3-quick-actions button {display:flex;align-items:center;gap:11px;min-height:58px;text-align:left;margin:0;padding:11px 12px;background:var(--g3-panel-light);border:1px solid var(--g3-border);border-radius:12px;font-size:.9rem;font-weight:700;}
+#game-menu .gb3-quick-actions button:not(:disabled):hover {background:#6c2552;}
+#game-menu .gb3-quick-actions #back-library {background:var(--g3-rose);border-color:var(--g3-rose);}
+#game-menu svg {width:20px;height:20px;flex:none;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;}
+#game-menu .gb3-quick-actions button svg {color:var(--g3-pink);}
+#game-menu .gb3-quick-actions #back-library svg {color:#fff;}
+#game-menu details {margin:7px 0;padding:0;background:rgba(67,24,53,.62);border:1px solid rgba(241,140,175,.19);border-radius:13px;}
+#game-menu details summary {display:flex;align-items:center;gap:12px;min-height:50px;padding:11px 13px;color:#fff;font-size:.93rem;font-weight:700;}
+#game-menu details summary svg {color:var(--g3-pink);}
+#game-menu details[open] {padding-bottom:14px;border-color:var(--g3-border);}
+#game-menu details fieldset,#game-menu .gb3-settings-body {padding:0 13px;}
+#game-menu button:not(:disabled) {border-radius:10px;background:var(--g3-rose);color:#fff;}
+#game-menu button.alt:not(:disabled) {background:var(--g3-panel-light);}
+#game-menu button:disabled {opacity:.45;}
+#game-menu input,#game-menu select,#game-menu textarea {background:#1d0b1b;color:#fff;border:1px solid var(--g3-border);border-radius:8px;}
+#game-menu .features .menu-actions button {min-width:0;margin:0;}
+#game-menu #feature-status,#game-menu #menu-status {overflow-wrap:anywhere;}
+#game-menu a {color:var(--g3-pink);}
+#keyboard-bindings {display:grid;grid-template-columns:1fr 1fr;gap:5px 10px;}
+.gb3-key-row {display:flex;align-items:center;justify-content:space-between;gap:7px;min-width:0;padding:7px 4px;border-bottom:1px solid rgba(241,140,175,.12);font-size:.8rem;text-align:left;}
+.gb3-key-row > span {min-width:0;overflow-wrap:anywhere;}
+#game-menu button.gb3-key-button {flex:none;min-width:62px;min-height:32px;margin:0;padding:4px 8px;font-size:.76rem;font-weight:750;border:1px solid var(--g3-border);}
+#game-menu button.gb3-key-button[aria-pressed="true"] {outline:2px solid var(--g3-pink);background:var(--g3-rose);}
+.gb3-settings-description {font-size:.81rem;color:var(--g3-label);line-height:1.5;margin:6px 0 14px;}
+#keymap-status {min-height:20px;font-size:.81rem;color:var(--g3-pink);}
+#game-menu #keyboard-reset {min-height:37px;margin:0;}
+#game-view button:focus-visible,#game-menu button:focus-visible,#game-view #screen:focus-visible {outline:2px solid var(--g3-pink);outline-offset:2px;}
+@media (max-width:580px) {#keyboard-bindings{grid-template-columns:1fr;} #game-menu{padding:12px;} #game-menu .game-header{margin:-12px -12px 12px;top:-12px;} #game-menu .gb3-quick-actions button{min-height:54px;} }
+@media (prefers-reduced-motion:reduce) {#game-view *,#game-menu * {animation:none!important;transition:none!important;}}
+
+/* ================================================================
+   GAEMBOY gameplay UX 13 - approved screen-only layout and pause menu.
+   Presentation only: the native 400x480 renderer / touchscreen inputs stay
+   unchanged. A single shared input system is used for all device modes.
+   ================================================================ */
+body.playing {
+  background:#000;
+  padding:0;
+}
+body.playing main {width:100%;max-width:none;height:100dvh;}
+body.playing #game-view {
+  width:100%;max-width:none;height:100dvh;gap:0;
+  display:flex;flex-direction:column;
+}
+#game-view .gb13-play-header {
+  position:fixed;top:max(12px,env(safe-area-inset-top));right:max(14px,env(safe-area-inset-right));
+  z-index:4;width:auto;min-height:0;max-width:none;margin:0;padding:0;
+  pointer-events:none;
+}
+#game-view .gb13-play-header .gb3-menu-button {
+  pointer-events:auto;min-height:38px;padding:7px 14px;margin:0;
+  border:1px solid rgba(241,140,175,.35);border-radius:10px;
+  background:rgba(43,22,38,.8);color:#fff;backdrop-filter:blur(9px);
+  font-size:.86rem;font-weight:650;
+}
+#game-view .gb3-console,#game-view .gb3-console-base {
+  border:0;box-shadow:none;border-radius:0;background:transparent;
+}
+#game-view .stage {margin:0;min-height:0;max-width:none;}
+#game-view #screen {
+  border:0;border-radius:0;box-shadow:none;background:#000;
+  width:min(100cqw,calc(100cqh * 5 / 6));max-width:100%;
+  image-rendering:auto;
+}
+#game-view .gb3-game-help {display:none;}
+body.gb3-input-desktop #touch-controls {display:none!important;}
+body.gb3-input-mobile #game-view {padding:0 max(6px,env(safe-area-inset-right)) max(6px,env(safe-area-inset-bottom)) max(6px,env(safe-area-inset-left));}
+body.gb3-input-mobile #touch-controls {max-width:620px;padding:6px 8px 4px;}
+body.gb3-input-mobile #game-view #screen {border-radius:3px;}
+body.gb3-input-mobile #touch-controls .face-buttons button {background:#e01961!important;border-color:#e01961;color:#fff;}
+body.gb3-input-mobile #touch-controls button {border-radius:11px;}
+body.gb3-input-mobile #touch-controls .stick {background:#241627;border:2px solid #715468;}
+body.gb3-input-mobile #touch-controls .stick-knob {background:#9f8397;}
+
+/* Full-screen Gaemboy NDS/GBA-style pause screen: black centre, thin plum tray. */
+dialog#game-menu.gb13-pause {
+  position:fixed;inset:0;width:100%;height:100%;height:100dvh;
+  max-width:none;max-height:none;margin:0;padding:0;
+  border:0;border-radius:0;box-shadow:none;
+  background:#000;color:#fff;overflow:hidden;
+  -webkit-user-select:none;user-select:none;
+}
+dialog#game-menu.gb13-pause[open] {display:flex;flex-direction:column;}
+dialog#game-menu.gb13-pause::backdrop {background:#000;backdrop-filter:none;}
+#game-menu.gb13-pause .gb13-pause-hero {
+  flex:1 1 auto;min-height:0;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;gap:17px;
+  padding:18px;text-align:center;background:#000;
+}
+#game-menu.gb13-pause .gb13-pause-caption {
+  font-size:clamp(34px,4vw,54px);font-weight:900;line-height:1;color:#fff;
+  letter-spacing:-.1em;
+}
+#game-menu.gb13-pause #menu-title {
+  font-size:clamp(20px,2.2vw,32px);font-weight:760;line-height:1.25;
+  margin:0;max-width:min(90vw,900px);color:#fff;
+  overflow-wrap:anywhere;
+}
+#game-menu.gb13-pause .gb13-pause-tray {
+  flex:0 0 auto;width:100%;max-height:min(75dvh,620px);
+  background:#180a13;border-top:1px solid #2d1425;
+  padding:12px max(12px,env(safe-area-inset-right)) max(11px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));
+}
+#game-menu.gb13-pause .gb13-tray-top {
+  min-height:31px;display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:0 5px 9px;
+}
+#game-menu.gb13-pause .gb13-tray-subtitle {
+  font-size:.7rem;letter-spacing:.15em;font-weight:750;color:#a17d91;
+}
+#game-menu.gb13-pause button.gb13-resume,
+#game-menu.gb13-pause button.gb13-resume:not(:disabled) {
+  flex:none;margin:0;padding:0 4px;min-height:30px;
+  background:none;border:0;color:#f20b56;font-size:.94rem;font-weight:760;
+}
+#game-menu.gb13-pause .gb13-pause-actions {
+  display:flex;align-items:stretch;justify-content:center;gap:8px;
+  width:100%;overflow-x:auto;padding:3px 0 10px;
+  scrollbar-width:thin;scrollbar-color:#663547 transparent;
+  overscroll-behavior-x:contain;
+}
+#game-menu.gb13-pause .gb13-pause-actions[hidden] {display:none!important;}
+#game-menu.gb13-pause button.gb13-action,
+#game-menu.gb13-pause button.gb13-action:not(:disabled) {
+  flex:0 0 92px;width:92px;min-width:92px;min-height:95px;
+  display:flex;flex-direction:column;justify-content:center;align-items:center;gap:5px;
+  padding:8px 5px;margin:0;background:#3c2b36;
+  border:1px solid #725765;border-radius:17px;color:#fff;
+  text-align:center;line-height:1.16;box-shadow:none;
+  font-size:.77rem;font-weight:670;
+}
+#game-menu.gb13-pause .gb13-action svg {
+  flex:none;width:38px;height:38px;stroke:#fff;stroke-width:2.15;
+  fill:none;stroke-linecap:round;stroke-linejoin:round;
+}
+#game-menu.gb13-pause .gb13-action span {display:block;}
+#game-menu.gb13-pause .gb13-action:not(:disabled):hover,
+#game-menu.gb13-pause .gb13-action:not(:disabled):focus-visible {
+  background:#634156;border-color:#df8aaf;outline-color:#ec8eb2;
+}
+#game-menu.gb13-pause .gb13-action[aria-pressed="true"] {
+  background:#7d224f!important;border-color:#f290bb!important;
+}
+#game-menu.gb13-pause button.gb13-action:disabled {opacity:.45;cursor:not-allowed;}
+#game-menu.gb13-pause .gb13-quick-status {
+  min-height:0;line-height:1.3;margin:0 auto;color:#e6b6cb;
+  text-align:center;font-size:.76rem;max-width:900px;
+}
+#game-menu.gb13-pause .gb13-quick-status:empty {display:none;}
+#game-menu.gb13-pause .gb13-quick-status.bad {color:#ffb4a9;}
+#game-menu.gb13-pause.gb13-settings-open .gb13-pause-hero {display:none;}
+#game-menu.gb13-pause.gb13-settings-open .gb13-pause-tray {
+  display:flex;flex-direction:column;flex:1 1 auto;max-height:none;min-height:0;
+  background:#180a13;
+}
+#game-menu.gb13-pause .gb13-settings-panel {
+  min-height:0;max-width:850px;width:100%;margin:0 auto;
+  padding:6px 10px 25px;overflow-y:auto;touch-action:pan-y;
+  -webkit-user-select:text;user-select:text;
+  color:#f9ecf4;
+}
+#game-menu.gb13-pause .gb13-settings-panel[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb13-settings-header {
+  display:flex;align-items:center;justify-content:space-between;
+  gap:10px;margin:0 0 10px;
+}
+#game-menu.gb13-pause .gb13-settings-header strong {font-size:1.05rem;}
+#game-menu.gb13-pause #gb13-settings-back {
+  margin:0;padding:9px 12px;min-height:38px;border-radius:10px;
+  border:1px solid #725765;background:#3c2b36;color:#fff;
+}
+#game-menu.gb13-pause .gb13-settings-legacy-actions .gb3-quick-actions {margin:0 0 10px;}
+#game-menu.gb13-pause .gb13-settings-legacy-actions .gb3-section-label {display:none;}
+#game-menu.gb13-pause .gb13-license {font-size:.74rem;margin:20px 0 5px;}
+#game-menu.gb13-pause #feature-status,#game-menu.gb13-pause #menu-status {margin:7px 0;}
+#game-menu.gb13-pause .gb13-settings-panel .features {margin:0;}
+#game-menu.gb13-pause .gb13-settings-panel details summary {font-size:.93rem;}
+@media (max-width:1000px) {
+  #game-menu.gb13-pause .gb13-pause-actions {justify-content:flex-start;}
+}
+@media (max-width:600px) {
+  #game-menu.gb13-pause .gb13-pause-caption {font-size:40px;}
+  #game-menu.gb13-pause .gb13-pause-tray {padding-inline:9px;}
+  #game-menu.gb13-pause button.gb13-action,
+  #game-menu.gb13-pause button.gb13-action:not(:disabled) {
+    flex-basis:79px;width:79px;min-width:79px;min-height:85px;font-size:.68rem;border-radius:14px;
+  }
+  #game-menu.gb13-pause .gb13-action svg {width:31px;height:31px;}
+}
+@media (orientation:landscape) and (max-height:520px) {
+  #game-menu.gb13-pause .gb13-pause-hero {gap:6px;padding:9px;}
+  #game-menu.gb13-pause .gb13-pause-caption {font-size:29px;}
+  #game-menu.gb13-pause #menu-title {font-size:17px;}
+  #game-menu.gb13-pause .gb13-tray-top {min-height:22px;padding-bottom:2px;}
+  #game-menu.gb13-pause button.gb13-action,
+  #game-menu.gb13-pause button.gb13-action:not(:disabled) {
+    min-height:70px;flex-basis:75px;width:75px;min-width:75px;padding:5px 3px;font-size:.65rem;
+  }
+  #game-menu.gb13-pause .gb13-action svg {width:26px;height:26px;}
+}
+/* Override the legacy modal's 40px close icon: this is a text link. */
+#game-menu.gb13-pause #close-menu {
+  width:auto;min-width:90px;height:auto;min-height:30px;
+  padding:2px 6px;white-space:nowrap;text-align:right;
+}
+body.playing #selection-footer {display:none!important;}
+
+/* GAEMBOY UX14 — visual save history, matching the existing pause tray. */
+#game-menu.gb13-pause .gb14-keys-link {
+  border:0;background:transparent;color:#ed95bd;font-size:.8rem;
+  padding:4px 11px;margin-left:auto;min-height:28px;text-decoration:underline;text-underline-offset:3px;
+}
+#game-menu.gb13-pause .gb14-gallery {width:min(100%,1100px);margin:2px auto 8px;
+  padding:5px 12px 12px;max-height:min(55vh,500px);overflow-y:auto;overscroll-behavior:contain;}
+#game-menu.gb13-pause .gb14-gallery[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb14-gallery-head {display:flex;gap:12px;align-items:center;margin:0 0 14px;}
+#game-menu.gb13-pause .gb14-gallery-head h3 {font-size:1.12rem;margin:0;color:#fff;font-weight:750;}
+#game-menu.gb13-pause #gb14-gallery-count {margin-left:auto;color:#e8afcc;font-size:.78rem;}
+#game-menu.gb13-pause #gb14-gallery-back {font-size:.8rem;border:1px solid #694253;background:#392231;color:#fff;border-radius:11px;padding:7px 11px;}
+#game-menu.gb13-pause .gb14-gallery-list {display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:13px;}
+#game-menu.gb13-pause .gb14-state-card {min-width:0;border:1px solid #744054;background:#331c2b;
+  border-radius:15px;overflow:hidden;padding:0;display:flex;flex-direction:column;color:#fff;box-shadow:none;}
+#game-menu.gb13-pause .gb14-state-card button {color:inherit;}
+#game-menu.gb13-pause .gb14-state-preview {aspect-ratio:4/3;display:flex;align-items:center;
+  justify-content:center;background:linear-gradient(145deg,#321223,#100b12);overflow:hidden;position:relative;}
+#game-menu.gb13-pause .gb14-state-preview img {width:100%;height:100%;object-fit:cover;}
+#game-menu.gb13-pause .gb14-state-preview .gb14-fallback {padding:14px;display:flex;flex-direction:column;
+  gap:8px;align-items:center;text-align:center;color:#d49cba;font-size:.8rem;}
+#game-menu.gb13-pause .gb14-state-preview .gb14-fallback svg {width:32px;height:32px;stroke:#da96b7;fill:none;stroke-width:1.7;}
+#game-menu.gb13-pause .gb14-state-details {padding:10px 11px 6px;display:flex;flex-direction:column;gap:4px;}
+#game-menu.gb13-pause .gb14-state-details strong {font-size:.83rem;}
+#game-menu.gb13-pause .gb14-state-details small {font-size:.7rem;color:#ddb5c7;}
+#game-menu.gb13-pause .gb14-state-actions {padding:8px 10px 12px;display:flex;gap:7px;margin-top:auto;}
+#game-menu.gb13-pause .gb14-state-actions button {border:1px solid #8f4e69;background:#a91452;
+  min-width:0;padding:8px 10px;border-radius:10px;flex:1;font-size:.77rem;font-weight:650;}
+#game-menu.gb13-pause .gb14-state-actions button.gb14-delete {background:transparent;flex:0 0 auto;border-color:#644452;}
+#game-menu.gb13-pause .gb14-state-card.gb14-create {border-style:dashed;border-color:#cf3773;}
+#game-menu.gb13-pause .gb14-state-card.gb14-create .gb14-state-preview {background:#3d1429;}
+#game-menu.gb13-pause .gb14-state-card.gb14-create .gb14-fallback svg {stroke:#ff77ae;}
+#game-menu.gb13-pause #gb14-gallery-message {margin:10px 0 0;color:#ffc1d7;font-size:.8rem;}
+#game-menu.gb13-pause #gb14-gallery-message:empty {display:none;}
+@media (max-width:600px) {
+  #game-menu.gb13-pause .gb14-gallery {max-height:min(67vh,560px);padding:4px 5px 14px;}
+  #game-menu.gb13-pause .gb14-gallery-list {grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;}
+  #game-menu.gb13-pause .gb14-state-preview {aspect-ratio:5/4;}
+  #game-menu.gb13-pause .gb14-gallery-head h3 {font-size:.95rem;}
+}
+
+/* GAEMBOY UX15 — spacious save-state cards with non-overlapping actions. */
+#game-menu.gb13-pause .gb14-gallery-list {
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));
+  gap:16px;
+}
+#game-menu.gb13-pause .gb14-state-details {padding:13px 15px 6px;gap:6px;}
+#game-menu.gb13-pause .gb14-state-details strong {font-size:1rem;line-height:1.25;}
+#game-menu.gb13-pause .gb14-state-details small {font-size:.82rem;}
+#game-menu.gb13-pause .gb14-state-actions {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:10px;padding:12px 14px 16px;}
+#game-menu.gb13-pause .gb14-state-actions button {font-size:.86rem;min-width:0;white-space:nowrap;padding:12px 15px;min-height:44px;}
+#game-menu.gb13-pause .gb14-state-actions button:only-child {grid-column:1 / -1;}
+#game-menu.gb13-pause .gb14-state-actions button.gb14-delete {padding-inline:13px;}
+@media(max-width:600px) {
+ #game-menu.gb13-pause .gb14-gallery-list {grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:12px;}
+ #game-menu.gb13-pause .gb14-state-preview {aspect-ratio:4 / 3;}
+}
+/* Speed settings: separate from the legacy advanced settings pane. */
+#game-menu.gb13-pause .gb15-speed-panel {width:min(100%,700px);margin:0 auto 10px;padding:5px 15px 20px;color:#fff;}
+#game-menu.gb13-pause .gb15-speed-panel[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb15-speed-heading {display:flex;gap:14px;align-items:center;margin-bottom:20px;}
+#game-menu.gb13-pause .gb15-speed-heading h3 {margin:0;font-size:1.1rem;}
+#game-menu.gb13-pause #gb15-speed-back {padding:7px 12px;border-radius:10px;background:#35232f;border:1px solid #785368;}
+#game-menu.gb13-pause .gb15-speed-body {background:#2b1424;border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:13px;}
+#game-menu.gb13-pause .gb15-speed-value {display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;}
+#game-menu.gb13-pause #gb15-speed-output {font-size:2.35rem;font-weight:800;color:#fba0c6;font-variant-numeric:tabular-nums;}
+#game-menu.gb13-pause .gb15-speed-value span {font-size:.83rem;color:#d6afc2;}
+#game-menu.gb13-pause #gb15-speed-range {display:block;width:100%;accent-color:#f11765;margin:9px 0;min-height:30px;touch-action:pan-x;}
+#game-menu.gb13-pause .gb15-speed-labels {display:flex;justify-content:space-between;color:#bd91a6;font-size:.78rem;}
+#game-menu.gb13-pause .gb15-speed-body p {margin:0 0 4px;color:#cca7ba;font-size:.83rem;line-height:1.55;}
+#game-menu.gb13-pause #gb15-speed-apply {background:#bf1556;border:1px solid #f45f95;}
+#game-menu.gb13-pause #gb15-speed-default {background:#473043;border:1px solid #745569;}
+@media(max-width:600px) {#game-menu.gb13-pause .gb15-speed-body{padding:15px;}}
+
+
+/* UX16: VISUAL ADAPTER ONLY. Styles adapted from the user-supplied Gaemboy
+   PauseMenu.css, SaveStatesModal.css. No frontend React code is imported. */
+/* Real icons from Gaemboy public/assets/icons/menu/ (only 9 PNGs). */
+#game-menu.gb13-pause .gb13-action .gb16-menu-icon {
+  width:38px;height:38px;max-width:100%;object-fit:contain;flex:none;
+  filter:brightness(0) invert(1) drop-shadow(0 2px 8px rgba(0,0,0,.3));
+  transition:transform .25s cubic-bezier(.34,1.56,.64,1),filter .25s ease;
+  pointer-events:none;
+}
+#game-menu.gb13-pause .gb13-action:hover:not(:disabled) .gb16-menu-icon {
+  transform:scale(1.1);
+  filter:brightness(0) invert(1) drop-shadow(0 4px 12px rgba(0,0,0,.5));
+}
+/* Copy only the pause-card appearance and hover treatment, preserving the
+   approved 3DS pause placement, button ids, handlers and mobile breakpoints. */
+#game-menu.gb13-pause button.gb13-action,
+#game-menu.gb13-pause button.gb13-action:not(:disabled) {
+  background:rgba(255,255,255,.12);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  backdrop-filter:blur(30px) saturate(180%);
+  border:1px solid rgba(255,255,255,.25);
+  border-radius:16px;
+  transition:background .25s cubic-bezier(.34,1.56,.64,1),transform .25s cubic-bezier(.34,1.56,.64,1),box-shadow .25s ease,border-color .25s ease;
+}
+#game-menu.gb13-pause button.gb13-action:hover:not(:disabled) {
+  background:rgba(255,255,255,.25);
+  transform:translateY(-4px) scale(1.02);
+  box-shadow:0 12px 32px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.3);
+  border-color:rgba(255,255,255,.4);
+}
+#game-menu.gb13-pause .gb13-action:active:not(:disabled) {transform:scale(.96);transition:transform .1s ease;}
+#game-menu.gb13-pause button.gb13-action:disabled {opacity:.35;cursor:not-allowed;}
+#game-menu.gb13-pause .gb13-action[aria-pressed="true"] {background:rgba(214,23,80,.45);border-color:rgba(255,45,111,.8);}
+/* Native Gaemboy speed control: from the original PauseMenu.css.
+   Keep UX15 range min/max/step and JS integration unchanged. */
+#game-menu.gb13-pause .gb15-speed-body {background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.20);backdrop-filter:blur(30px) saturate(180%);}
+#game-menu.gb13-pause #gb15-speed-range {
+  -webkit-appearance:none;appearance:none;
+  display:block;width:100%;height:6px;min-height:6px;
+  border:0;border-radius:3px;padding:0;margin:18px 0 17px;
+  background:rgba(255,255,255,.2);outline:none;cursor:pointer;
+  touch-action:pan-x;
+}
+#game-menu.gb13-pause #gb15-speed-range::-webkit-slider-thumb {
+  -webkit-appearance:none;appearance:none;width:20px;height:20px;
+  border:0;border-radius:50%;background:#fff;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.3);transition:transform .2s ease,box-shadow .2s ease;
+}
+#game-menu.gb13-pause #gb15-speed-range::-webkit-slider-thumb:hover {transform:scale(1.15);box-shadow:0 3px 12px rgba(0,0,0,.4);}
+#game-menu.gb13-pause #gb15-speed-range::-moz-range-thumb {
+  width:20px;height:20px;border:none;border-radius:50%;background:#fff;cursor:pointer;
+  box-shadow:0 2px 8px rgba(0,0,0,.3);
+}
+#game-menu.gb13-pause #gb15-speed-range:focus-visible {outline:2px solid #ff9cc2;outline-offset:8px;}
+/* SaveStatesModal: original translucent card surface, hover elevation, borders.
+   UX15's >=250px card width and two-button layout remain intact. */
+#game-menu.gb13-pause .gb14-state-card {
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
+  border-radius:12px;transition:background .2s cubic-bezier(.4,0,.2,1),border-color .2s ease,transform .2s ease,box-shadow .2s ease;
+}
+#game-menu.gb13-pause .gb14-state-card:hover {
+  background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.2);
+  transform:translateY(-2px);box-shadow:0 8px 24px rgba(0,0,0,.3);
+}
+#game-menu.gb13-pause .gb14-state-preview {background:rgba(0,0,0,.5);}
+#game-menu.gb13-pause .gb14-state-actions button {border-radius:12px;transition:background .2s ease,transform .2s ease;}
+#game-menu.gb13-pause .gb14-state-actions button:not(.gb14-delete) {background:linear-gradient(135deg,#d61750 0%,#b01240 100%);border-color:rgba(255,255,255,.2);}
+#game-menu.gb13-pause .gb14-state-actions button:hover:not(:disabled) {transform:translateY(-1px);}
+#game-menu.gb13-pause .gb14-state-actions button.gb14-delete {background:rgba(255,255,255,.1);border-color:rgba(255,255,255,.2);}
+@media(max-width:600px){
+  #game-menu.gb13-pause .gb13-action .gb16-menu-icon {width:32px;height:32px;}
+}
+@media(prefers-reduced-motion:reduce){
+  #game-menu.gb13-pause .gb13-action,#game-menu.gb13-pause .gb16-menu-icon,#game-menu.gb13-pause .gb14-state-card {transition:none!important;}
+}
+
+/* GAEMBOY UX17 — CheatCodesModal appearance copied selectively from original
+   Gaemboy frontend. This is UI-only: the 3DS core still uses Gateway codes. */
+#game-menu.gb13-pause #close-menu.gb13-resume,
+#game-menu.gb13-pause #close-menu.gb13-resume:not(:disabled) {
+  color:#d61750!important;background:transparent!important;border:0!important;
+  font-size:17px;font-weight:700;letter-spacing:.5px;
+  transition:color .25s ease,transform .25s ease;
+}
+#game-menu.gb13-pause #close-menu.gb13-resume:hover:not(:disabled) {
+  color:#b01240!important;transform:translateY(-1px);
+}
+#game-menu.gb13-pause .gb17-cheat-panel {
+  width:min(100%,720px);margin:0 auto 8px;min-height:0;max-height:min(70dvh,650px);
+  display:flex;flex-direction:column;overflow:hidden;color:#fff;
+  background:rgba(28,28,30,.95);backdrop-filter:blur(30px) saturate(180%);
+  -webkit-backdrop-filter:blur(30px) saturate(180%);
+  border:1px solid rgba(255,255,255,.1);border-radius:20px;
+  box-shadow:0 20px 60px rgba(0,0,0,.5);
+}
+#game-menu.gb13-pause .gb17-cheat-panel[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb17-cheat-header {
+  padding:18px 20px;display:flex;align-items:center;gap:14px;
+  border-bottom:1px solid rgba(255,255,255,.1);
+}
+#game-menu.gb13-pause .gb17-cheat-header h3 {margin:0;font-size:23px;font-weight:600;flex:1;}
+#game-menu.gb13-pause .gb17-cheat-header #gb17-cheat-count {font-size:12px;color:rgba(255,255,255,.62);}
+#game-menu.gb13-pause #gb17-cheats-back {
+  background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.15);
+  color:#fff;padding:9px 13px;min-height:38px;border-radius:12px;font-size:14px;
+}
+#game-menu.gb13-pause #gb17-cheats-back:hover {background:rgba(255,255,255,.15);}
+#game-menu.gb13-pause .gb17-cheat-content {
+  display:flex;flex-direction:column;gap:12px;margin:0;padding:20px;border:0;
+  flex:1 1 auto;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+  -webkit-user-select:text;user-select:text;
+}
+#game-menu.gb13-pause .gb17-cheat-content:disabled {opacity:.6;}
+#game-menu.gb13-pause #gb17-cheat-new,
+#game-menu.gb13-pause #cheat-add {
+  background:linear-gradient(135deg,#10b981 0%,#059669 100%);
+  color:#fff;border:1px solid rgba(255,255,255,.2);border-radius:12px;
+  font-size:15px;font-weight:650;min-height:45px;padding:12px 18px;
+}
+#game-menu.gb13-pause #gb17-cheat-new {width:100%;margin:0 0 10px;}
+#game-menu.gb13-pause #gb17-cheat-new:hover:not(:disabled),
+#game-menu.gb13-pause #cheat-add:hover:not(:disabled) {box-shadow:0 8px 24px rgba(16,185,129,.32);transform:translateY(-1px);}
+#game-menu.gb13-pause .gb17-cheat-form {
+  display:flex;flex-direction:column;gap:9px;padding:18px;
+  background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.1);
+  border-radius:16px;margin:0 0 10px;
+}
+#game-menu.gb13-pause .gb17-cheat-form[hidden],
+#game-menu.gb13-pause #gb17-cheat-new[hidden],
+#game-menu.gb13-pause #gb17-cheat-empty[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb17-cheat-form h4 {margin:0 0 6px;font-size:18px;font-weight:600;}
+#game-menu.gb13-pause .gb17-cheat-form > label {font-size:14px;color:rgba(255,255,255,.75);font-weight:500;}
+#game-menu.gb13-pause .gb17-cheat-form input:not([type="checkbox"]),
+#game-menu.gb13-pause .gb17-cheat-form textarea {
+  width:100%;box-sizing:border-box;margin:0;padding:11px 14px;
+  color:#fff;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+  border-radius:10px;font-size:15px;font-weight:400;
+}
+#game-menu.gb13-pause .gb17-cheat-form textarea {font:13px/1.5 Monaco,Menlo,monospace;min-height:112px;resize:vertical;}
+#game-menu.gb13-pause .gb17-cheat-form input:focus,
+#game-menu.gb13-pause .gb17-cheat-form textarea:focus {outline:2px solid rgba(16,185,129,.45);outline-offset:1px;}
+#game-menu.gb13-pause .gb17-cheat-format {font-size:12px;color:rgba(255,255,255,.53);}
+#game-menu.gb13-pause .gb17-cheat-enabled-label {display:flex;align-items:center;gap:9px;margin:5px 0;}
+#game-menu.gb13-pause .gb17-cheat-enabled-label input {width:17px;height:17px;accent-color:#10b981;}
+#game-menu.gb13-pause .gb17-cheat-form-actions {display:flex;gap:10px;flex-wrap:wrap;}
+#game-menu.gb13-pause .gb17-cheat-form-actions button {flex:1;min-width:110px;}
+#game-menu.gb13-pause #gb17-cheat-cancel {
+  background:rgba(255,255,255,.1);color:#fff;border:1px solid rgba(255,255,255,.15);
+  border-radius:10px;padding:12px 16px;min-height:43px;
+}
+#game-menu.gb13-pause .gb17-cheat-list {display:flex;flex-direction:column;gap:12px;}
+#game-menu.gb13-pause .gb17-cheat-item {
+  display:flex;align-items:center;justify-content:space-between;gap:15px;
+  padding:16px;border:1px solid rgba(255,255,255,.1);
+  border-radius:14px;background:rgba(255,255,255,.05);
+  transition:background .2s ease,border-color .2s ease;
+}
+#game-menu.gb13-pause .gb17-cheat-item:hover {background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.16);}
+#game-menu.gb13-pause .gb17-cheat-item.enabled {background:rgba(16,185,129,.1);border-color:rgba(16,185,129,.5);}
+#game-menu.gb13-pause .gb17-cheat-info {flex:1;min-width:0;}
+#game-menu.gb13-pause .gb17-cheat-name {display:block;font-size:16px;font-weight:600;overflow-wrap:anywhere;}
+#game-menu.gb13-pause .gb17-cheat-details {display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px;}
+#game-menu.gb13-pause .gb17-cheat-code {
+  font:12px/1.4 Monaco,Menlo,monospace;color:rgba(255,255,255,.62);
+  background:rgba(0,0,0,.2);padding:3px 8px;border-radius:6px;
+  overflow-wrap:anywhere;white-space:pre-wrap;max-height:90px;overflow:auto;
+}
+#game-menu.gb13-pause .gb17-cheat-type {font-size:12px;background:rgba(255,255,255,.1);color:rgba(255,255,255,.7);padding:3px 8px;border-radius:6px;}
+#game-menu.gb13-pause .gb17-cheat-row-actions {display:flex;align-items:center;gap:10px;flex:none;}
+#game-menu.gb13-pause .gb17-cheat-toggle {display:inline-block;position:relative;width:51px;height:31px;flex:none;cursor:pointer;}
+#game-menu.gb13-pause .gb17-cheat-toggle input {opacity:0;position:absolute;inset:0;width:100%;height:100%;margin:0;cursor:pointer;z-index:1;}
+#game-menu.gb13-pause .gb17-toggle-slider {position:absolute;inset:0;border-radius:31px;background:rgba(255,255,255,.2);transition:background .2s ease;}
+#game-menu.gb13-pause .gb17-toggle-slider:before {
+  content:"";position:absolute;width:27px;height:27px;left:2px;bottom:2px;background:#fff;
+  border-radius:50%;box-shadow:0 2px 4px rgba(0,0,0,.2);transition:transform .2s ease;
+}
+#game-menu.gb13-pause .gb17-cheat-toggle input:checked + .gb17-toggle-slider {background:#10b981;}
+#game-menu.gb13-pause .gb17-cheat-toggle input:checked + .gb17-toggle-slider:before {transform:translateX(20px);}
+#game-menu.gb13-pause .gb17-cheat-toggle input:focus-visible + .gb17-toggle-slider {outline:2px solid #fff;outline-offset:3px;}
+#game-menu.gb13-pause .gb17-cheat-delete {
+  background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.15);
+  border-radius:10px;color:#ff9e99;font-size:12px;padding:8px 10px;min-height:36px;
+}
+#game-menu.gb13-pause .gb17-cheat-delete:hover:not(:disabled) {background:rgba(255,69,58,.12);}
+#game-menu.gb13-pause .gb17-cheat-empty {margin:18px 0;text-align:center;color:rgba(255,255,255,.65);font-size:15px;}
+#game-menu.gb13-pause .gb17-cheat-empty small {display:block;margin-top:6px;font-size:13px;color:rgba(255,255,255,.43);}
+#game-menu.gb13-pause .gb17-cheat-status {font-size:13px;color:#ffd2e6;margin:0 20px 15px;min-height:0;}
+@media(max-width:600px) {
+  #game-menu.gb13-pause .gb17-cheat-panel {max-height:min(78dvh,730px);border-radius:16px;}
+  #game-menu.gb13-pause .gb17-cheat-header {padding:13px;gap:8px;}
+  #game-menu.gb13-pause .gb17-cheat-header h3 {font-size:18px;}
+  #game-menu.gb13-pause .gb17-cheat-content {padding:13px;}
+  #game-menu.gb13-pause .gb17-cheat-item {padding:12px;flex-wrap:wrap;}
+  #game-menu.gb13-pause .gb17-cheat-row-actions {margin-left:auto;}
+  #game-menu.gb13-pause .gb17-cheat-name {font-size:15px;}
+}
+@media(prefers-reduced-motion:reduce) {
+  #game-menu.gb13-pause .gb17-cheat-item,#game-menu.gb13-pause .gb17-toggle-slider,#game-menu.gb13-pause .gb17-toggle-slider:before {transition:none!important;}
+}
+
+/* GAEMBOY UX18: modal centered in viewport; footer and validation remain readable. */
+#game-menu.gb13-pause.gb17-cheats-open::before {
+  content:"";position:fixed;inset:0;background:rgba(0,0,0,.76);z-index:6;pointer-events:none;
+}
+#game-menu.gb13-pause .gb17-cheat-panel:not([hidden]) {
+  position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+  width:min(720px,calc(100vw - 24px));max-height:calc(100dvh - 24px);
+  margin:0;padding:0;z-index:7;box-sizing:border-box;
+}
+#game-menu.gb13-pause .gb17-cheat-content {
+  min-height:0;overflow-y:auto;overflow-x:hidden;overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+}
+#game-menu.gb13-pause .gb17-cheat-header {flex:none;}
+#game-menu.gb13-pause #gb17-cheat-status {
+  flex:none;max-width:100%;margin:0;padding:8px 20px max(10px,env(safe-area-inset-bottom));
+  line-height:1.45;overflow-wrap:anywhere;
+}
+#game-menu.gb13-pause .gb17-cheat-form select {
+  width:100%;min-height:44px;box-sizing:border-box;padding:10px 14px;
+  border:1px solid rgba(255,255,255,.18);border-radius:10px;
+  background:#352c35;color:#fff;font:inherit;appearance:auto;
+}
+#game-menu.gb13-pause .gb17-cheat-form select:focus-visible {outline:2px solid #d61750;outline-offset:2px;}
+#game-menu.gb13-pause .gb18-cheat-validation {margin:0;font-size:.8rem;line-height:1.5;color:#81e5b1;min-height:1.25em;}
+#game-menu.gb13-pause .gb18-cheat-validation.invalid {color:#ffb6ad;}
+#game-menu.gb13-pause #cheat-code[aria-invalid="true"] {border-color:#d56c78;}
+#game-menu.gb13-pause #cheat-add:disabled {opacity:.5;cursor:not-allowed;transform:none;box-shadow:none;}
+@media(max-width:600px){
+ #game-menu.gb13-pause .gb17-cheat-panel:not([hidden]) {max-height:calc(100dvh - 12px);width:calc(100vw - 12px);}
+ #game-menu.gb13-pause #gb17-cheat-status {padding:8px 12px max(10px,env(safe-area-inset-bottom));}
+}

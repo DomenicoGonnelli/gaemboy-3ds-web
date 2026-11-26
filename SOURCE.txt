@@ -1,0 +1,2 @@
+Built from https://github.com/DomenicoGonnelli/gaemboy-3ds-web/tree/4e7b35f99338ca0f5be579e2819ca40c32b8d70b
+Emulator core: Azahar (GPLv3+), pinned commit and patches listed in that tree.
