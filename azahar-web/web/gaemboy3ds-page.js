@@ -183,13 +183,20 @@ function failRequests(message) {
 
 function renderSlots(items) {
   slots = items;
+  const selector = $('state-slot');
+  const selected = Number(selector.value) || 1;
+  selector.replaceChildren();
   for (const slot of items) {
-    const option = $('state-slot').querySelector(`option[value="${slot.slot}"]`);
+    const option = document.createElement('option');
+    option.value = String(slot.slot);
     option.textContent = slot.exists
       ? `Slot ${slot.slot} — ${new Date(slot.modified).toLocaleString()}`
       : `Slot ${slot.slot} — vuoto`;
+    selector.append(option);
   }
+  selector.value = String(Math.min(items.length, selected));
   refreshFeatureControls();
+  if ($('gb14-state-gallery') && !$('gb14-state-gallery').hidden) void gb14RenderGallery();
 }
 
 function renderCheats(items) {
@@ -293,7 +300,7 @@ function boot(file, managedCache = false) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=27', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=14', { type: 'module' });
   $('selection-view').hidden = $('selection-footer').hidden = true;
   $('game-view').hidden = false;
   document.body.classList.add('playing');
@@ -1049,6 +1056,7 @@ gameMenu.addEventListener('cancel', (e) => {
   if (mappingAction) { e.preventDefault(); cancelRemap(); }
 });
 gameMenu.addEventListener('close', () => {
+  gb14CloseGallery();
   gb13CloseSettings();
   mappingAction = null;
   resetInput();
@@ -1070,6 +1078,7 @@ function gb13CloseSettings() {
   $('gb13-settings-title').textContent = 'Impostazioni';
 }
 function gb13OpenSettings(title = 'Impostazioni', detailsId = null) {
+  gb14CloseGallery();
   gameMenu.classList.add('gb13-settings-open');
   $('gb13-settings-panel').hidden = false;
   $('gb13-pause-actions').hidden = true;
@@ -1085,7 +1094,7 @@ function gb13UpdateQuickAvailability() {
   const running = !!memory && readI('status') === 2;
   const readyToSave = running && storageAvailable && !featureBusy;
   $('gb13-quick-save').disabled = !readyToSave || $('state-save').disabled;
-  $('gb13-quick-load').disabled = !readyToSave || $('state-load').disabled;
+  $('gb13-quick-load').disabled = !readyToSave;
   $('gb13-quick-fast').disabled = !running;
   $('gb13-quick-mic').disabled = !running || mediaBusy;
   // Link-cable emulation is not implemented by the Azahar web core.
@@ -1095,15 +1104,11 @@ function gb13UpdateQuickAvailability() {
   $('gb13-quick-fast').setAttribute('aria-pressed', String(running && readI('throttle') === 0));
 }
 $('gb13-settings-back').onclick = gb13CloseSettings;
-$('gb13-quick-settings').onclick = () => gb13OpenSettings();
+$('gb14-open-keys').onclick = () => gb13OpenSettings('Comandi e tastiera','keyboard-settings');
 $('gb13-quick-cheats').onclick = () => gb13OpenSettings('Codici Cheat','gb13-cheat-details');
 $('gb13-quick-speed').onclick = () => gb13OpenSettings('Imposta velocità');
-$('gb13-quick-save').onclick = () => {
-  if (!$('state-save').disabled) { gb13Feedback('Salvataggio rapido: operazione in corso…'); $('state-save').click(); }
-};
-$('gb13-quick-load').onclick = () => {
-  if (!$('state-load').disabled) { gb13Feedback('Caricamento rapido: operazione in corso…'); $('state-load').click(); }
-};
+$('gb13-quick-save').onclick = () => { void gb14OpenGallery('save'); };
+$('gb13-quick-load').onclick = () => { void gb14OpenGallery('load'); };
 $('gb13-quick-fast').onclick = () => {
   if (!memory || $('gb13-quick-fast').disabled) return;
   $('throttle').click();
@@ -1159,10 +1164,7 @@ $('back-library').onclick = async () => {
 $('state-slot').onchange = refreshFeatureControls;
 async function savePreview() {
   try {
-    // Software renderer: take a small snapshot of the canvas.
     if (ctx) return await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
-    // WebGL OffscreenCanvas was transferred to the worker; a CPU framebuffer is only
-    // present for some renderers, so this fallback is intentionally best effort.
     if (!memory || !base) return null;
     const w = readI('fbWidth'), h = readI('fbHeight'), ptr = readI('fbPtr');
     if (w < 1 || h < 1 || w * h > 4096 * 4096 || ptr < 1 || ptr + w * h * 4 > memory.buffer.byteLength) return null;
@@ -1172,27 +1174,172 @@ async function savePreview() {
     return await new Promise(resolve => c.toBlob(resolve, 'image/png'));
   } catch { return null; }
 }
-$('state-save').onclick = async () => {
-  const slot = slots.find(item => item.slot === Number($('state-slot').value));
-  if (slot?.exists && !confirm(`Sovrascrivere lo stato nello slot ${slot.slot}?`)) return;
-  const result = await performFeature('save-state', { slot: Number($('state-slot').value) }, 'Stato salvato nel browser.');
-  if (!result || !activeGameKey) return;
-  const game = libGames.get(activeGameKey);
-  if (!game) return;
-  const screenshot = await savePreview();
-  dispatchEvent(new CustomEvent('gaemboy3ds:savestate-saved', { detail: {
-    gameKey: gamePath(game), savedAt: Date.now(), screenshot,
-  } }));
-};
-$('state-load').onclick = () => {
-  performFeature('load-state', { slot: Number($('state-slot').value) }, 'Stato caricato.');
-};
-$('state-delete').onclick = () => {
-  const slot = Number($('state-slot').value);
-  if (confirm(`Eliminare lo stato nello slot ${slot}?`)) {
-    performFeature('delete-state', { slot }, 'Stato eliminato.');
+// Generate the screenshot before saving state, not after resuming gameplay.
+// The transferred WebGL canvas belongs to the worker, so prefer a worker snapshot.
+async function gb14CapturePreview() {
+  let blob = null;
+  try { blob = (await requestCommand('capture-preview'))?.preview || null; } catch {}
+  if (!(blob instanceof Blob) || !blob.type.startsWith('image/')) blob = await savePreview();
+  if (!(blob instanceof Blob) || !blob.type.startsWith('image/')) return null;
+  try {
+    const bitmap = await createImageBitmap(blob);
+    const scale = Math.min(1, 480 / Math.max(bitmap.width, bitmap.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bitmap.width * scale));
+    c.height = Math.max(1, Math.round(bitmap.height * scale));
+    c.getContext('2d').drawImage(bitmap, 0, 0, c.width, c.height);
+    bitmap.close?.();
+    const compressed = await new Promise(resolve => c.toBlob(resolve, 'image/webp', 0.72));
+    if (compressed) blob = compressed;
+  } catch { /* A raw WebP preview is better than losing the save. */ }
+  return blob.size <= 2 * 1024 * 1024 ? blob : null;
+}
+async function gb14SaveState(slot, promptOverwrite = true) {
+  const entry = slots.find(x => x.slot === slot);
+  if (!entry || featureBusy) return false;
+  if (entry.exists && promptOverwrite && !confirm(`Sovrascrivere il salvataggio ${slot}?`)) return false;
+  const screenshot = await gb14CapturePreview();
+  const preview = screenshot ? new Uint8Array(await screenshot.arrayBuffer()) : null;
+  const result = await performFeature('save-state', {slot, preview}, 'Salvataggio rapido creato.');
+  if (!result) return false;
+  if (activeGameKey) {
+    const game = libGames.get(activeGameKey);
+    if (game) dispatchEvent(new CustomEvent('gaemboy3ds:savestate-saved', {detail: {
+      gameKey: gamePath(game), savedAt: Date.now(), screenshot,
+    }}));
   }
-};
+  return true;
+}
+async function gb14LoadState(slot) {
+  if (!slots.some(x => x.slot === slot && x.exists) || featureBusy) return false;
+  const result = await performFeature('load-state', {slot}, 'Salvataggio caricato.');
+  if (!result) return false;
+  gb14CloseGallery();
+  gameMenu.close();
+  return true;
+}
+async function gb14DeleteState(slot) {
+  if (!slots.some(x => x.slot === slot && x.exists) || featureBusy) return false;
+  if (!confirm(`Eliminare il salvataggio ${slot}? Questa operazione non può essere annullata.`)) return false;
+  return !!(await performFeature('delete-state', {slot}, 'Salvataggio eliminato.'));
+}
+$('state-save').onclick = () => void gb14SaveState(Number($('state-slot').value));
+$('state-load').onclick = () => void gb14LoadState(Number($('state-slot').value));
+$('state-delete').onclick = () => void gb14DeleteState(Number($('state-slot').value));
+
+let gb14GalleryMode = null;
+let gb14GalleryToken = 0;
+const gb14PreviewUrls = new Set();
+function gb14ClearPreviews() {
+  for (const url of gb14PreviewUrls) URL.revokeObjectURL(url);
+  gb14PreviewUrls.clear();
+}
+function gb14CloseGallery() {
+  gb14GalleryMode = null;
+  gb14GalleryToken++;
+  gb14ClearPreviews();
+  $('gb14-state-gallery').hidden = true;
+  $('gb13-pause-actions').hidden = false;
+}
+function gb14CreateElement(tag, className, text) {
+  const el = document.createElement(tag);
+  if (className) el.className = className;
+  if (text !== undefined) el.textContent = text;
+  return el;
+}
+function gb14PreviewPlaceholder(message) {
+  const placeholder = gb14CreateElement('span', 'gb14-fallback');
+  const icon = document.createElementNS('http://www.w3.org/2000/svg','svg');
+  icon.setAttribute('viewBox','0 0 24 24'); icon.setAttribute('aria-hidden','true');
+  const path = document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.setAttribute('d','M4 5h16v14H4z M7 16l4-4 3 3 2-2 2 3 M8 9h.01');
+  icon.append(path);
+  placeholder.append(icon, document.createTextNode(message));
+  return placeholder;
+}
+function gb14StateCard(slot, mode, snapshot = null) {
+  const node = gb14CreateElement('article','gb14-state-card');
+  const preview = gb14CreateElement('div','gb14-state-preview');
+  if (snapshot) {
+    const image = document.createElement('img');
+    const url = URL.createObjectURL(snapshot); gb14PreviewUrls.add(url);
+    image.src = url; image.alt = `Anteprima del salvataggio ${slot.slot}`; image.loading = 'lazy';
+    preview.append(image);
+  } else preview.append(gb14PreviewPlaceholder('Anteprima non disponibile'));
+  const details = gb14CreateElement('div','gb14-state-details');
+  details.append(gb14CreateElement('strong','',`Salvataggio ${slot.slot}`));
+  const date = slot.modified ? new Date(slot.modified).toLocaleString('it-IT',{dateStyle:'medium',timeStyle:'short'}) : '';
+  details.append(gb14CreateElement('small','',date));
+  const actions = gb14CreateElement('div','gb14-state-actions');
+  const main = gb14CreateElement('button','', mode === 'load' ? 'Carica' : 'Sovrascrivi');
+  main.type = 'button';
+  main.onclick = async () => {
+    const ok = mode === 'load' ? await gb14LoadState(slot.slot) : await gb14SaveState(slot.slot);
+    if (ok && mode === 'save') void gb14RenderGallery();
+  };
+  actions.append(main);
+  if (mode === 'save') {
+    const remove = gb14CreateElement('button','gb14-delete','Elimina');
+    remove.type = 'button'; remove.setAttribute('aria-label', `Elimina salvataggio ${slot.slot}`);
+    remove.onclick = async () => { if (await gb14DeleteState(slot.slot)) void gb14RenderGallery(); };
+    actions.append(remove);
+  }
+  node.append(preview,details,actions);
+  return node;
+}
+async function gb14RenderGallery() {
+  const mode = gb14GalleryMode;
+  if (!mode) return;
+  const token = ++gb14GalleryToken;
+  gb14ClearPreviews();
+  const list = $('gb14-gallery-list'); list.replaceChildren();
+  const existing = slots.filter(x => x.exists).sort((a,b)=>(b.modified || 0)-(a.modified || 0));
+  $('gb14-gallery-count').textContent = `${existing.length} / ${slots.length} salvataggi`;
+  $('gb14-gallery-title').textContent = mode === 'save' ? 'Salvataggio rapido' : 'Caricamento rapido';
+  $('gb14-gallery-message').textContent = '';
+  if (mode === 'save') {
+    const free = slots.find(x => !x.exists);
+    if (free) {
+      const card = gb14CreateElement('article','gb14-state-card gb14-create');
+      const preview = gb14CreateElement('div','gb14-state-preview');
+      preview.append(gb14PreviewPlaceholder('+ Nuovo salvataggio'));
+      const details = gb14CreateElement('div','gb14-state-details');
+      details.append(gb14CreateElement('strong','','Salva senza sovrascrivere'));
+      const actions = gb14CreateElement('div','gb14-state-actions');
+      const add = gb14CreateElement('button','','Salva ora'); add.type = 'button';
+      add.onclick = async () => { if (await gb14SaveState(free.slot, false)) void gb14RenderGallery(); };
+      actions.append(add); card.append(preview,details,actions); list.append(card);
+    } else $('gb14-gallery-message').textContent = 'Archivio pieno: seleziona un salvataggio da sovrascrivere o eliminare.';
+  }
+  if (!existing.length && mode === 'load') {
+    $('gb14-gallery-message').textContent = 'Nessun salvataggio rapido. Creane uno dal menu di pausa.';
+    return;
+  }
+  for (const slot of existing) {
+    if (token !== gb14GalleryToken || mode !== gb14GalleryMode) return;
+    let image = null;
+    if (slot.hasPreview) {
+      try {
+        const response = await requestCommand('slot-preview',{slot:slot.slot});
+        if (response?.preview) image = new Blob([response.preview], {type:'image/webp'});
+      } catch {}
+    }
+    if (token !== gb14GalleryToken || mode !== gb14GalleryMode) return;
+    list.append(gb14StateCard(slot,mode,image));
+  }
+}
+async function gb14OpenGallery(mode) {
+  if (!storageAvailable || !memory || featureBusy) {
+    gb13Feedback('Salvataggi non disponibili: verifica che il gioco sia in esecuzione.',true);
+    return;
+  }
+  gb13CloseSettings();
+  gb14GalleryMode = mode;
+  $('gb13-pause-actions').hidden = true;
+  $('gb14-state-gallery').hidden = false;
+  await gb14RenderGallery();
+}
+$('gb14-gallery-back').onclick = gb14CloseGallery;
 $('export-saves').onclick = async () => {
   const result = await performFeature('export-saves');
   if (!result) return;

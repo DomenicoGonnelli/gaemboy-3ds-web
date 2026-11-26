@@ -270,3 +270,44 @@ dialog#game-menu.gb13-pause::backdrop {background:#000;backdrop-filter:none;}
   padding:2px 6px;white-space:nowrap;text-align:right;
 }
 body.playing #selection-footer {display:none!important;}
+
+/* GAEMBOY UX14 — visual save history, matching the existing pause tray. */
+#game-menu.gb13-pause .gb14-keys-link {
+  border:0;background:transparent;color:#ed95bd;font-size:.8rem;
+  padding:4px 11px;margin-left:auto;min-height:28px;text-decoration:underline;text-underline-offset:3px;
+}
+#game-menu.gb13-pause .gb14-gallery {width:min(100%,1100px);margin:2px auto 8px;
+  padding:5px 12px 12px;max-height:min(55vh,500px);overflow-y:auto;overscroll-behavior:contain;}
+#game-menu.gb13-pause .gb14-gallery[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb14-gallery-head {display:flex;gap:12px;align-items:center;margin:0 0 14px;}
+#game-menu.gb13-pause .gb14-gallery-head h3 {font-size:1.12rem;margin:0;color:#fff;font-weight:750;}
+#game-menu.gb13-pause #gb14-gallery-count {margin-left:auto;color:#e8afcc;font-size:.78rem;}
+#game-menu.gb13-pause #gb14-gallery-back {font-size:.8rem;border:1px solid #694253;background:#392231;color:#fff;border-radius:11px;padding:7px 11px;}
+#game-menu.gb13-pause .gb14-gallery-list {display:grid;grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:13px;}
+#game-menu.gb13-pause .gb14-state-card {min-width:0;border:1px solid #744054;background:#331c2b;
+  border-radius:15px;overflow:hidden;padding:0;display:flex;flex-direction:column;color:#fff;box-shadow:none;}
+#game-menu.gb13-pause .gb14-state-card button {color:inherit;}
+#game-menu.gb13-pause .gb14-state-preview {aspect-ratio:4/3;display:flex;align-items:center;
+  justify-content:center;background:linear-gradient(145deg,#321223,#100b12);overflow:hidden;position:relative;}
+#game-menu.gb13-pause .gb14-state-preview img {width:100%;height:100%;object-fit:cover;}
+#game-menu.gb13-pause .gb14-state-preview .gb14-fallback {padding:14px;display:flex;flex-direction:column;
+  gap:8px;align-items:center;text-align:center;color:#d49cba;font-size:.8rem;}
+#game-menu.gb13-pause .gb14-state-preview .gb14-fallback svg {width:32px;height:32px;stroke:#da96b7;fill:none;stroke-width:1.7;}
+#game-menu.gb13-pause .gb14-state-details {padding:10px 11px 6px;display:flex;flex-direction:column;gap:4px;}
+#game-menu.gb13-pause .gb14-state-details strong {font-size:.83rem;}
+#game-menu.gb13-pause .gb14-state-details small {font-size:.7rem;color:#ddb5c7;}
+#game-menu.gb13-pause .gb14-state-actions {padding:8px 10px 12px;display:flex;gap:7px;margin-top:auto;}
+#game-menu.gb13-pause .gb14-state-actions button {border:1px solid #8f4e69;background:#a91452;
+  min-width:0;padding:8px 10px;border-radius:10px;flex:1;font-size:.77rem;font-weight:650;}
+#game-menu.gb13-pause .gb14-state-actions button.gb14-delete {background:transparent;flex:0 0 auto;border-color:#644452;}
+#game-menu.gb13-pause .gb14-state-card.gb14-create {border-style:dashed;border-color:#cf3773;}
+#game-menu.gb13-pause .gb14-state-card.gb14-create .gb14-state-preview {background:#3d1429;}
+#game-menu.gb13-pause .gb14-state-card.gb14-create .gb14-fallback svg {stroke:#ff77ae;}
+#game-menu.gb13-pause #gb14-gallery-message {margin:10px 0 0;color:#ffc1d7;font-size:.8rem;}
+#game-menu.gb13-pause #gb14-gallery-message:empty {display:none;}
+@media (max-width:600px) {
+  #game-menu.gb13-pause .gb14-gallery {max-height:min(67vh,560px);padding:4px 5px 14px;}
+  #game-menu.gb13-pause .gb14-gallery-list {grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;}
+  #game-menu.gb13-pause .gb14-state-preview {aspect-ratio:5/4;}
+  #game-menu.gb13-pause .gb14-gallery-head h3 {font-size:.95rem;}
+}

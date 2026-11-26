@@ -11,7 +11,7 @@ const SAVES = '/gaemboy/3ds/saves';
 const DSP_PLACEHOLDER = `${SAVES}/Azahar/sdmc/3ds/dspfirm.cdc`;
 const SYNC_MS = 10000;
 const MAX_BACKUP_BYTES = 512 * 1024 * 1024;
-const SLOT_COUNT = 3;
+const SLOT_COUNT = 12; // Historical quick saves; legacy slots 1-3 remain compatible.
 
 const post = (type, data = {}, transfer) => self.postMessage({ type, ...data }, transfer);
 let mod = null;
@@ -396,13 +396,14 @@ function slotPath(slot) {
   return `${stateDir()}/slot-${slot}.gb3dsstate`;
 }
 
+const previewPath = (slot) => `${stateDir()}/slot-${slot}.preview.webp`;
 function listSlots() {
   return Array.from({ length: SLOT_COUNT }, (_, index) => {
     const slot = index + 1;
     const path = slotPath(slot);
     if (!mod.FS.analyzePath(path).exists) return { slot, exists: false };
     const stat = mod.FS.stat(path);
-    return { slot, exists: true, size: stat.size, modified: stat.mtime.getTime() };
+    return { slot, exists: true, size: stat.size, modified: stat.mtime.getTime(), hasPreview: mod.FS.analyzePath(previewPath(slot)).exists };
   });
 }
 
@@ -500,12 +501,39 @@ async function command(action, data) {
         throw new Error('Il core non è riuscito a creare lo stato. Controlla il log.');
       }
       mod.FS.rename(temporary, path);
+      // Screenshots are optional; state persistence always takes priority.
+      const imagePath = previewPath(data.slot);
+      if (mod.FS.analyzePath(imagePath).exists) mod.FS.unlink(imagePath);
+      if (data.preview && data.preview.byteLength > 0 && data.preview.byteLength <= 2 * 1024 * 1024) {
+        try {
+          const bytes = data.preview instanceof Uint8Array ? data.preview : new Uint8Array(data.preview);
+          mod.FS.writeFile(imagePath, bytes);
+        } catch (err) { logLine(`[gaemboy] anteprima non salvata: ${err.message || err}`); }
+      }
       try {
         await syncSaves('save state');
       } catch (err) {
         throw new Error(`Stato creato, ma non salvato nel browser: ${err}`);
       }
       return { slots: listSlots() };
+    }
+    case 'capture-preview': {
+      // GPU path: OffscreenCanvas is owned by this worker. May fail in certain
+      // browsers/WebGL contexts, so the page also has a CPU fallback.
+      try {
+        const surface = mod.canvas;
+        if (!surface || typeof surface.convertToBlob !== 'function') return { preview: null };
+        const blob = await surface.convertToBlob({ type: 'image/webp', quality: 0.78 });
+        return { preview: blob && blob.size < 2 * 1024 * 1024 ? blob : null };
+      } catch (err) {
+        logLine(`[gaemboy] snapshot GPU non disponibile: ${err.message || err}`);
+        return { preview: null };
+      }
+    }
+    case 'slot-preview': {
+      const path = previewPath(data.slot);
+      if (!mod.FS.analyzePath(path).exists) return { preview: null };
+      return { preview: mod.FS.readFile(path) };
     }
     case 'load-state': {
       const path = slotPath(data.slot);
@@ -518,6 +546,8 @@ async function command(action, data) {
       const path = slotPath(data.slot);
       if (!mod.FS.analyzePath(path).exists) throw new Error('Slot vuoto.');
       mod.FS.unlink(path);
+      const imagePath = previewPath(data.slot);
+      if (mod.FS.analyzePath(imagePath).exists) mod.FS.unlink(imagePath);
       try {
         await syncSaves('eliminazione stato');
       } catch (err) {

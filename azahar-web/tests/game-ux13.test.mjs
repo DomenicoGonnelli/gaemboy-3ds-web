@@ -26,7 +26,7 @@ function localMenu(){
  assert(section.includes('gb13UpdateQuickAvailability'));
  const context={
   $:get, memory:null, storageAvailable:false, featureBusy:false,mediaBusy:false,
-  readI:()=>2, savePreview:async()=>null,
+  readI:()=>2, savePreview:async()=>null, gb14CloseGallery:()=>{},
   MutationObserver:class{observe(){}},
   gameMenu:{open:true,classList:get('menuClasses').classList},
   document:{body:{classList:get('bodyClasses').classList},createElement:()=>({click(){}})},
@@ -59,26 +59,20 @@ test('Gaemboy black pause screen and plum bottom action tray, not a popup settin
  assert.match(page,/\$\('menu-title'\)\.textContent = \$\('game-title'\)\.textContent/);
  assert.match(page,/if \(gameMenu\.open\) gameMenu\.close\(\); else openGameMenu\(\)/);
 });
-test('quick actions keep real 3DS handlers, disabled link is honest',()=>{
- const {get,calls,context}=localMenu();
- get('gb13-quick-settings').onclick();
+test('quick actions open history galleries and preserve existing core controls',()=>{
+ const {get,context}=localMenu();
+ get('gb14-open-keys').onclick();
  assert.equal(get('gb13-settings-panel').hidden,false);
  get('gb13-settings-back').onclick();
  assert.equal(get('gb13-settings-panel').hidden,true);
- get('state-save').disabled=false;
- get('gb13-quick-save').onclick();
- assert(calls.includes('state-save'));
- get('state-load').disabled=false;
- get('gb13-quick-load').onclick();
- assert(calls.includes('state-load'));
- get('gb13-quick-fast').disabled=false;
- context.memory={};
- // Action delegation and menu state are controlled by the existing emulation core.
+ assert.match(page,/\$\('gb13-quick-save'\)\.onclick = \(\) => \{ void gb14OpenGallery\('save'\)/);
+ assert.match(page,/\$\('gb13-quick-load'\)\.onclick = \(\) => \{ void gb14OpenGallery\('load'\)/);
  assert.match(page,/\$\('throttle'\)\.click\(\)/);
  assert.match(page,/\$\('mic-toggle'\)\.click\(\)/);
  assert.match(page,/\$\('back-library'\)\.click\(\)/);
  assert.match(html,/id="gb13-quick-link"[^>]*disabled="disabled"/);
  assert.match(page,/\$\('gb13-quick-link'\)\.disabled = true/);
+ assert.doesNotMatch(html,/id="gb13-quick-settings"/);
 });
 test('keyboard remapping remains secondary and Escape stays reserved',()=>{
  assert.match(html,/id="keyboard-settings"/);
@@ -86,8 +80,9 @@ test('keyboard remapping remains secondary and Escape stays reserved',()=>{
  assert.match(page,/event\.code !== 'Escape'/);
  assert.match(page,/localStorage\.setItem\(STORAGE_KEY/);
 });
-test('UX13 assets and metadata are versioned independently of home/cache',()=>{
- assert.match(html,/name="gaemboy-build" content="game-ux13"/);
- for(const f of ['gaemboy3ds-game.css','gaemboy3ds-game.js','gaemboy3ds-page.js']) assert(html.includes(`${f}?v=13`));
+test('UX14 assets and metadata are versioned independently of home/cache',()=>{
+ assert.match(html,/name="gaemboy-build" content="game-ux14"/);
+ for(const f of ['gaemboy3ds-game.css','gaemboy3ds-page.js']) assert(html.includes(`${f}?v=14`));
+ assert(html.includes('gaemboy3ds-game.js?v=13'));
  assert.match(html,/home-v5\.js\?v=10/);
 });

@@ -14,8 +14,8 @@
 <link rel="stylesheet" href="./gaemboy3ds-ui.css?v=10">
   <link rel="stylesheet" href="home-v5.css?v=10">
   <link rel="stylesheet" href="home-v5-5.css?v=10">
-<link rel="stylesheet" href="./gaemboy3ds-game.css?v=13">
-<meta name="gaemboy-build" content="game-ux13">
+<link rel="stylesheet" href="./gaemboy3ds-game.css?v=14">
+<meta name="gaemboy-build" content="game-ux14">
 </head>
 <body>
 <main>
@@ -94,7 +94,7 @@
     <h2 id="menu-title">Gioco in pausa</h2>
   </div>
   <div class="gb13-pause-tray">
-    <div class="gb13-tray-top"><span class="gb13-tray-subtitle">MENU DI PAUSA</span><button id="close-menu" type="button" class="gb13-resume" autofocus>Riprendi</button></div>
+    <div class="gb13-tray-top"><span class="gb13-tray-subtitle">MENU DI PAUSA</span><button id="gb14-open-keys" type="button" class="gb14-keys-link">Tasti</button><button id="close-menu" type="button" class="gb13-resume" autofocus>Riprendi</button></div>
     <div id="gb13-pause-actions" class="gb13-pause-actions" role="group" aria-label="Azioni di gioco">
       <button type="button" id="gb13-quick-save" class="gb13-action" aria-label="Salvataggio rapido"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3h13l3 3v15H3V3h2Zm2 0v7h10V3M7 21v-8h10v8"/></svg><span>Salvataggio<br>Rapido</span></button>
       <button type="button" id="gb13-quick-load" class="gb13-action" aria-label="Caricamento rapido"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v16H4zM12 6v10m-4-4 4 4 4-4M7 19h10"/></svg><span>Caricamento<br>Rapido</span></button>
@@ -105,9 +105,13 @@
       <button type="button" id="gb13-quick-rotate" class="gb13-action" ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12a9 9 0 0 1 15-6l2 2M20 3v5h-5M21 12a9 9 0 0 1-15 6l-2-2M4 21v-5h5"/></svg><span>Ruota<br>schermo</span></button>
       <button type="button" id="gb13-quick-mic" class="gb13-action" ><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="2" width="6" height="13" rx="3"/><path d="M5 11a7 7 0 0 0 14 0m-7 7v4m-4 0h8"/></svg><span>Attiva<br>Microfono</span></button>
       <button type="button" id="gb13-quick-link" class="gb13-action" disabled="disabled" title="Collegamento non disponibile sul core 3DS"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 15 15 9M8 7l-2 0a5 5 0 0 0 0 10h3m7 0h2a5 5 0 0 0 0-10h-3"/></svg><span>Collega</span></button>
-      <button type="button" id="gb13-quick-settings" class="gb13-action" ><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a2 2 0 0 1 2 2l2 1 2-1 2 3-2 2v3l2 2-2 3-2-1-2 1a2 2 0 0 1-4 0l-2-1-2 1-2-3 2-2v-3L4 8l2-3 2 1 2-1a2 2 0 0 1 2-2z"/><circle cx="12" cy="12" r="3"/></svg><span>Impostazioni</span></button>
       <button type="button" id="gb13-quick-exit" class="gb13-action" ><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="m9 9 6 6m0-6-6 6"/></svg><span>Chiudi<br>gioco</span></button>
     </div>
+    <section id="gb14-state-gallery" class="gb14-gallery" aria-labelledby="gb14-gallery-title" hidden>
+      <div class="gb14-gallery-head"><button id="gb14-gallery-back" type="button">← Menu</button><h3 id="gb14-gallery-title">Salvataggi rapidi</h3><span id="gb14-gallery-count"></span></div>
+      <div id="gb14-gallery-list" class="gb14-gallery-list"></div>
+      <p id="gb14-gallery-message" role="status" aria-live="polite"></p>
+    </section>
     <p id="gb13-quick-status" role="status" aria-live="polite" class="gb13-quick-status"></p>
     <div id="gb13-settings-panel" class="gb13-settings-panel" hidden>
       <div class="gb13-settings-header"><button id="gb13-settings-back" type="button" class="alt">← Torna al menu</button><strong id="gb13-settings-title">Impostazioni</strong></div>
@@ -227,7 +231,7 @@
   }
 </script>
 <script defer src="./gaemboy3ds-game.js?v=13"></script>
-<script type="module" src="./gaemboy3ds-page.js?v=13"></script>
+<script type="module" src="./gaemboy3ds-page.js?v=14"></script>
   <script defer src="home-v5-hash.js?v=10"></script>
 <script defer src="home-v5.js?v=10"></script>
   <script defer src="home-v5-5.js?v=10"></script>
