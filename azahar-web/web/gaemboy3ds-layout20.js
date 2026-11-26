@@ -185,7 +185,10 @@
     interaction=null;drawFrames();
   }
   function resumeDisabled(){controls.disabled=disabledBefore;}
-  function finish(){editing=false;select.hidden=true;interaction=null;resumeDisabled();document.body.classList.remove('gb20-edit-mode');}
+  function finish(){
+    editing=false;select.hidden=true;interaction=null;resumeDisabled();document.body.classList.remove('gb20-edit-mode');
+    window.dispatchEvent(new Event('gaemboy3ds:layout-edit-end'));
+  }
   function save(){
     if(!editing)return;
     try {localStorage.setItem(storageKey(),JSON.stringify({version:1,rects:layout}));}
@@ -212,6 +215,7 @@
     bridge.refresh();
     layout=old || defaults();
     disabledBefore=controls.disabled;
+    window.dispatchEvent(new Event('gaemboy3ds:layout-edit-start'));
     pause.close();
     editing=true;select.hidden=false;document.body.classList.add('gb20-edit-mode');
     controls.disabled=true;

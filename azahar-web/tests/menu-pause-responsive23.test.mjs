@@ -1,0 +1,58 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import vm from 'node:vm';
+const root=path.resolve(import.meta.dirname,'../web');
+const worker=fs.readFileSync(path.join(root,'gaemboy3ds-worker.js'),'utf8');
+const page=fs.readFileSync(path.join(root,'gaemboy3ds-page.js'),'utf8');
+const editor=fs.readFileSync(path.join(root,'gaemboy3ds-layout20.js'),'utf8');
+const html=fs.readFileSync(path.join(root,'index.html'),'utf8');
+const css=fs.readFileSync(path.join(root,'gaemboy3ds-mobile-panels23.css'),'utf8');
+test('pause halts emulation tick, resume schedules a single new tick',()=>{
+  const a=worker.indexOf('let gb15SpeedTarget = 1;'), b=worker.indexOf('instrumentGL();',a);
+  assert.ok(a>=0&&b>a);
+  const snippet=worker.slice(a,b);
+  let now=1000,count=0;const scheduled=[];const cancelled=[];
+  const mc={port1:{onmessage(){count++;}},port2:{postMessage(){scheduled.push('restart');}}};
+  const ctx={self:{__gb3ds_mc:mc},performance:{now(){return now;}},perf:{ticks:0,tickMs:0,tickMax:0},setTimeout(fn,ms){scheduled.push({fn,ms});return scheduled.length;},clearTimeout(id){cancelled.push(id);},lastPerfFlush:1e9,flushPerf(){}};
+  vm.runInNewContext(snippet,ctx);
+  ctx.instrumentTicks();
+  mc.port1.onmessage({});assert.equal(count,1);
+  ctx.gb23SetMenuPause(true);
+  mc.port1.onmessage({});assert.equal(count,1,'no frame during pause');
+  ctx.gb23SetMenuPause(false);
+  assert.equal(scheduled.filter(x=>x==='restart').length,1);
+  mc.port1.onmessage({});assert.equal(count,2,'one new tick after resume');
+});
+test('pause invalidates pending slow-speed tick',()=>{
+  const a=worker.indexOf('let gb15SpeedTarget = 1;'), b=worker.indexOf('instrumentGL();',a);
+  const snippet=worker.slice(a,b);
+  let now=1000,count=0,pending=null,cleared=false;
+  const mc={port1:{onmessage(){count++;}},port2:{postMessage(){}}};
+  const ctx={self:{__gb3ds_mc:mc},performance:{now(){return now;}},perf:{ticks:0,tickMs:0,tickMax:0},setTimeout(fn){pending=fn;return 5;},clearTimeout(){cleared=true;},lastPerfFlush:1e9,flushPerf(){}};
+  vm.runInNewContext(snippet,ctx);ctx.instrumentTicks();ctx.gb15SetSpeed(.5);
+  mc.port1.onmessage({});assert.equal(count,1);
+  now=1001;mc.port1.onmessage({});assert.equal(count,1);
+  ctx.gb23SetMenuPause(true);assert.equal(cleared,true);
+  pending();assert.equal(count,1,'late timer cannot tick while paused');
+});
+test('menu Escape and close control real pause and audio stays silent while open',()=>{
+  assert.ok(page.includes('gameMenu.showModal();'));
+  assert.ok(page.includes('gb23SetPaused(true);'));
+  assert.ok(page.includes("gameMenu.addEventListener('close', () => {"));
+  assert.ok(page.includes('gb23SetPaused(false);'));
+  assert.ok(page.includes('!gb23Paused && audioOn && audioCtx'));
+  assert.ok(page.includes("worker?.postMessage({type: 'menu-pause', paused: next})"));
+  assert.ok(worker.includes("data.type === 'menu-pause'"));
+  assert.ok(editor.includes('gaemboy3ds:layout-edit-start'));
+  assert.ok(editor.includes('gaemboy3ds:layout-edit-end'));
+});
+test('mobile save previews are compact and not cropped; slider fits small screens',()=>{
+  assert.ok(html.includes('gaemboy3ds-mobile-panels23.css?v=23'));
+  assert.ok(css.includes('grid-template-columns:repeat(2,minmax(0,1fr))'));
+  assert.ok(css.includes('object-fit:contain'));
+  assert.ok(css.includes('gb15-speed-panel'));
+  assert.ok(css.includes('min-height:44px'));
+  assert.ok(page.includes('gb23SyncMobileDetail()'));
+});

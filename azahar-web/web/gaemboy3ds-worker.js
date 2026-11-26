@@ -286,6 +286,26 @@ function cacheWorkerfsReads(WORKERFS) {
 // guarantee that heavy games can reach 8x; it only prevents exceeding the target.
 let gb15SpeedTarget = 1;
 let gb15LastFrameStart = 0;
+// UX23: pause the actual emulation tick, not just user inputs or rendering.
+let gb23MenuPaused = false;
+let gb23TickEpoch = 0;
+let gb23ScheduledTimer = null;
+function gb23SetMenuPause(value) {
+  const next = !!value;
+  if (gb23MenuPaused === next) return;
+  gb23MenuPaused = next;
+  ++gb23TickEpoch;
+  if (gb23ScheduledTimer !== null) {
+    clearTimeout(gb23ScheduledTimer);
+    gb23ScheduledTimer = null;
+  }
+  if (!next) {
+    gb15LastFrameStart = 0; // skip any catch-up delay after a long pause
+    // The last scheduled frame was deliberately dropped during pause.
+    // Schedule exactly one new frame to restart the core-owned tick chain.
+    self.__gb3ds_mc?.port2?.postMessage(0);
+  }
+}
 function gb15SetSpeed(value) {
   const n=Number(value);
   gb15SpeedTarget=Number.isFinite(n) ? Math.min(8,Math.max(.5,Math.round(n*2)/2)) : 1;
@@ -298,12 +318,16 @@ function instrumentTicks() {
   if (!handler) return;
   mc.__gbWrapped = true;
   mc.port1.onmessage = (e) => {
+    // Preserve the queued message while paused by dropping its emulation tick.
+    if (gb23MenuPaused) return;
+    const epoch = gb23TickEpoch;
     // One queued tick at a time: the frontend schedules the NEXT tick itself.
     // For <=1x C++ retains its normal 60fps limiter; for >1x it is disabled.
     const now=performance.now();
     const interval=1000/(59.83*gb15SpeedTarget);
     const wait=gb15LastFrameStart ? Math.max(0,gb15LastFrameStart+interval-now) : 0;
     const tick=() => {
+      if (gb23MenuPaused || epoch !== gb23TickEpoch) return;
       const t0 = performance.now();
       handler.call(mc.port1,e);
       const dt = performance.now() - t0;
@@ -316,7 +340,11 @@ function instrumentTicks() {
     // Unthrottled event-loop scheduling avoids an extra timer on the hot path.
     // At normal speed let Azahar handle timing: no second JS timer on the audio-critical path.
     if (gb15SpeedTarget === 1) { tick(); return; }
-    if (wait > 1) setTimeout(tick,Math.ceil(wait)); else tick();
+    if (wait > 1) gb23ScheduledTimer = setTimeout(() => {
+      gb23ScheduledTimer = null;
+      tick();
+    }, Math.ceil(wait));
+    else tick();
   };
 }
 instrumentGL();
@@ -632,6 +660,7 @@ async function createWithMemoryRetry(options) {
 }
 
 self.onmessage = async ({ data }) => {
+  if (data.type === 'menu-pause') { gb23SetMenuPause(data.paused); instrumentTicks(); return; }
   if (data.type === 'set-speed') { gb15SetSpeed(data.value); instrumentTicks(); return; }
   if (data.type === 'sync') {
     syncSaves('richiesta').catch((err) => logLine(`[gaemboy] sincronizzazione fallita: ${err}`));

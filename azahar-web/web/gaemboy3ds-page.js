@@ -73,6 +73,22 @@ const PAD_DEADZONE = 0.15;
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
 const gameMenu = $('game-menu');
+// UX23: menu pauses the worker, including while the layout editor is open.
+let gb23Paused = false;
+let gb23LayoutEditing = false;
+let gb23AudioTransition = Promise.resolve();
+function gb23SetPaused(value) {
+  const next = !!value;
+  if (gb23Paused === next) return;
+  gb23Paused = next;
+  worker?.postMessage({type: 'menu-pause', paused: next});
+  // Serialize AudioContext state transitions to avoid fast open/close races.
+  gb23AudioTransition = gb23AudioTransition.catch(() => {}).then(async () => {
+    if (!audioCtx) return;
+    if (next) await audioCtx.suspend();
+    else if (audioOn) await audioCtx.resume();
+  }).catch(err => log('[audio] pausa menu: '+(err.message || err)));
+}
 const touchControls = bindTouchControls($('touch-controls'));
 const urlParams = new URLSearchParams(location.search);
 // WebGL2 (GPU) everywhere, Safari included; ?sw forces the much slower software renderer.
@@ -323,7 +339,7 @@ function initAudio() {
     type: 'init', buffer: memory.buffer, state: base, srcRate: AUDIO_HZ,
     ringPtr: readI('audioRingPtr'), ringFrames: readI('audioRingFrames'),
   });
-  audioCtx.resume();
+  if (!gb23Paused) audioCtx.resume();
 }
 
 // ---------------------------------------------------------------- boot
@@ -334,7 +350,7 @@ function boot(file, managedCache = false) {
   $('rom-info').textContent = `${file.name} · ${(file.size / 1048576).toFixed(1)} MB · letto in locale, nessun upload`;
   log(`Avvio ${file.name} (${(file.size / 1048576).toFixed(1)} MB)…`);
   const t0 = performance.now();
-  worker = new Worker('./gaemboy3ds-worker.js?v=14&audio22', { type: 'module' });
+  worker = new Worker('./gaemboy3ds-worker.js?v=14&audio22&pause23', { type: 'module' });
   $('selection-view').hidden = $('selection-footer').hidden = true;
   $('game-view').hidden = false;
   document.body.classList.add('playing');
@@ -1040,7 +1056,7 @@ $('audio').onclick = async () => {
   audioOn = !audioOn;
   await ensureAudio();
   if (audioNode) audioNode.port.postMessage({ type: 'mute', muted: !audioOn });
-  if (audioCtx) audioCtx.resume();
+  if (audioCtx && !gb23Paused) audioCtx.resume();
   $('audio').textContent = audioOn ? 'Audio: on' : 'Audio: off';
 };
 $('save').onclick = () => worker && worker.postMessage({ type: 'sync' });
@@ -1052,6 +1068,7 @@ function openGameMenu() {
   gb17CloseCheats();
   $('menu-title').textContent = $('game-title').textContent || 'Gioco in pausa';
   gameMenu.showModal();
+  gb23SetPaused(true);
   refreshFeatureControls();
   renderKeyboardBindings();
 }
@@ -1097,6 +1114,8 @@ gameMenu.addEventListener('cancel', (e) => {
   if (mappingAction) { e.preventDefault(); cancelRemap(); }
 });
 gameMenu.addEventListener('close', () => {
+  // The layout editor closes the dialog but stays in edit mode.
+  if (!gb23LayoutEditing && !document.body.classList.contains('gb20-edit-mode')) gb23SetPaused(false);
   gb17CloseCheats();
   gb14CloseGallery();
   gb13CloseSettings();
@@ -1106,6 +1125,17 @@ gameMenu.addEventListener('close', () => {
   refreshFeatureControls();
   canvas.focus({ preventScroll: true });
 });
+// Keep the emulator halted while repositioning screens and virtual controls.
+window.addEventListener('gaemboy3ds:layout-edit-start', () => { gb23LayoutEditing = true; gb23SetPaused(true); });
+window.addEventListener('gaemboy3ds:layout-edit-end', () => {
+  gb23LayoutEditing = false;
+  if (!gameMenu.open) gb23SetPaused(false);
+});
+// Compact save and speed panels occupy the available mobile height.
+function gb23SyncMobileDetail() {
+  gameMenu.classList.toggle('gb23-mobile-detail',
+    !$('gb14-state-gallery').hidden || !$('gb15-speed-panel').hidden);
+}
 // ---------------------------------------------------------------- Gaemboy-style pause menu (Patch 13)
 // The quick buttons delegate to the existing, tested 3DS handlers. No duplicate
 // save-state format, new emulator inputs or new unsupported link implementation.
@@ -1180,6 +1210,7 @@ $('gb17-cheat-cancel').onclick = () => gb17ShowCheatForm(false);
 function gb15CloseSpeedPanel() {
   $('gb15-speed-panel').hidden = true;
   $('gb13-pause-actions').hidden = false;
+  gb23SyncMobileDetail();
 }
 function gb15SpeedText(value) { return value.toFixed(1).replace('.',',')+'×'; }
 function gb15UpdateSpeedLabel() {
@@ -1191,6 +1222,7 @@ $('gb13-quick-speed').onclick = () => {
   gb13CloseSettings();
   $('gb13-pause-actions').hidden = true;
   $('gb15-speed-panel').hidden = false;
+  gb23SyncMobileDetail();
   $('gb15-speed-range').value = String(gb15SelectedSpeed);
   gb15UpdateSpeedLabel();
   $('gb15-speed-range').focus({preventScroll:true});
@@ -1334,6 +1366,7 @@ function gb14CloseGallery() {
   gb14ClearPreviews();
   $('gb14-state-gallery').hidden = true;
   $('gb13-pause-actions').hidden = false;
+  gb23SyncMobileDetail();
 }
 function gb14CreateElement(tag, className, text) {
   const el = document.createElement(tag);
@@ -1433,6 +1466,7 @@ async function gb14OpenGallery(mode) {
   gb14GalleryMode = mode;
   $('gb13-pause-actions').hidden = true;
   $('gb14-state-gallery').hidden = false;
+  gb23SyncMobileDetail();
   await gb14RenderGallery();
 }
 $('gb14-gallery-back').onclick = gb14CloseGallery;
@@ -1759,7 +1793,7 @@ document.addEventListener('contextmenu', (e) => {
 });
 // iOS only lets audio start from a user gesture: resume on touch if it was suspended.
 document.addEventListener('pointerdown', () => {
-  if (audioOn && audioCtx && audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
+  if (!gb23Paused && audioOn && audioCtx && audioCtx.state !== 'running') audioCtx.resume().catch(() => {});
 }, { capture: true });
 
 const params = new URLSearchParams(location.search);
