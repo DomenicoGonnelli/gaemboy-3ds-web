@@ -311,3 +311,36 @@ body.playing #selection-footer {display:none!important;}
   #game-menu.gb13-pause .gb14-state-preview {aspect-ratio:5/4;}
   #game-menu.gb13-pause .gb14-gallery-head h3 {font-size:.95rem;}
 }
+
+/* GAEMBOY UX15 — spacious save-state cards with non-overlapping actions. */
+#game-menu.gb13-pause .gb14-gallery-list {
+  grid-template-columns:repeat(auto-fill,minmax(min(100%,250px),1fr));
+  gap:16px;
+}
+#game-menu.gb13-pause .gb14-state-details {padding:13px 15px 6px;gap:6px;}
+#game-menu.gb13-pause .gb14-state-details strong {font-size:1rem;line-height:1.25;}
+#game-menu.gb13-pause .gb14-state-details small {font-size:.82rem;}
+#game-menu.gb13-pause .gb14-state-actions {display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;gap:10px;padding:12px 14px 16px;}
+#game-menu.gb13-pause .gb14-state-actions button {font-size:.86rem;min-width:0;white-space:nowrap;padding:12px 15px;min-height:44px;}
+#game-menu.gb13-pause .gb14-state-actions button:only-child {grid-column:1 / -1;}
+#game-menu.gb13-pause .gb14-state-actions button.gb14-delete {padding-inline:13px;}
+@media(max-width:600px) {
+ #game-menu.gb13-pause .gb14-gallery-list {grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:12px;}
+ #game-menu.gb13-pause .gb14-state-preview {aspect-ratio:4 / 3;}
+}
+/* Speed settings: separate from the legacy advanced settings pane. */
+#game-menu.gb13-pause .gb15-speed-panel {width:min(100%,700px);margin:0 auto 10px;padding:5px 15px 20px;color:#fff;}
+#game-menu.gb13-pause .gb15-speed-panel[hidden] {display:none!important;}
+#game-menu.gb13-pause .gb15-speed-heading {display:flex;gap:14px;align-items:center;margin-bottom:20px;}
+#game-menu.gb13-pause .gb15-speed-heading h3 {margin:0;font-size:1.1rem;}
+#game-menu.gb13-pause #gb15-speed-back {padding:7px 12px;border-radius:10px;background:#35232f;border:1px solid #785368;}
+#game-menu.gb13-pause .gb15-speed-body {background:#2b1424;border-radius:16px;padding:22px;display:flex;flex-direction:column;gap:13px;}
+#game-menu.gb13-pause .gb15-speed-value {display:flex;flex-wrap:wrap;align-items:baseline;gap:12px;}
+#game-menu.gb13-pause #gb15-speed-output {font-size:2.35rem;font-weight:800;color:#fba0c6;font-variant-numeric:tabular-nums;}
+#game-menu.gb13-pause .gb15-speed-value span {font-size:.83rem;color:#d6afc2;}
+#game-menu.gb13-pause #gb15-speed-range {display:block;width:100%;accent-color:#f11765;margin:9px 0;min-height:30px;touch-action:pan-x;}
+#game-menu.gb13-pause .gb15-speed-labels {display:flex;justify-content:space-between;color:#bd91a6;font-size:.78rem;}
+#game-menu.gb13-pause .gb15-speed-body p {margin:0 0 4px;color:#cca7ba;font-size:.83rem;line-height:1.55;}
+#game-menu.gb13-pause #gb15-speed-apply {background:#bf1556;border:1px solid #f45f95;}
+#game-menu.gb13-pause #gb15-speed-default {background:#473043;border:1px solid #745569;}
+@media(max-width:600px) {#game-menu.gb13-pause .gb15-speed-body{padding:15px;}}

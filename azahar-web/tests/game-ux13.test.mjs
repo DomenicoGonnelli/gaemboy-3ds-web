@@ -16,7 +16,7 @@ function localMenu(){
     const classes=new Set();
     elements.set(id,{
      id, disabled:false, hidden:false, open:false, textContent:'', classList:{add(v){classes.add(v);},remove(v){classes.delete(v);},contains(v){return classes.has(v);},toggle(v,on){if(on)classes.add(v);else classes.delete(v);}},
-     click(){calls.push(id);}, focus(){}, scrollIntoView(){}, setAttribute(n,v){this[n]=v;},
+     click(){calls.push(id);if(this.onclick)this.onclick();}, focus(){}, scrollIntoView(){}, addEventListener(){}, setAttribute(n,v){this[n]=v;},
      querySelectorAll(){return [];}
     });
    }
@@ -67,7 +67,7 @@ test('quick actions open history galleries and preserve existing core controls',
  assert.equal(get('gb13-settings-panel').hidden,true);
  assert.match(page,/\$\('gb13-quick-save'\)\.onclick = \(\) => \{ void gb14OpenGallery\('save'\)/);
  assert.match(page,/\$\('gb13-quick-load'\)\.onclick = \(\) => \{ void gb14OpenGallery\('load'\)/);
- assert.match(page,/\$\('throttle'\)\.click\(\)/);
+ assert.match(page,/gb15ApplySpeed\(\)/);
  assert.match(page,/\$\('mic-toggle'\)\.click\(\)/);
  assert.match(page,/\$\('back-library'\)\.click\(\)/);
  assert.match(html,/id="gb13-quick-link"[^>]*disabled="disabled"/);
@@ -81,8 +81,8 @@ test('keyboard remapping remains secondary and Escape stays reserved',()=>{
  assert.match(page,/localStorage\.setItem\(STORAGE_KEY/);
 });
 test('UX14 assets and metadata are versioned independently of home/cache',()=>{
- assert.match(html,/name="gaemboy-build" content="game-ux14"/);
- for(const f of ['gaemboy3ds-game.css','gaemboy3ds-page.js']) assert(html.includes(`${f}?v=14`));
+ assert.match(html,/name="gaemboy-build" content="game-ux15"/);
+ for(const f of ['gaemboy3ds-game.css','gaemboy3ds-page.js']) assert(html.includes(`${f}?v=15`));
  assert(html.includes('gaemboy3ds-game.js?v=13'));
  assert.match(html,/home-v5\.js\?v=10/);
 });

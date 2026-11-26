@@ -282,6 +282,15 @@ function cacheWorkerfsReads(WORKERFS) {
 }
 // The frontend schedules each frame through self.__gb3ds_mc (MessageChannel); wrap its handler
 // once it exists to time whole ticks (emulation + GL submission + throttle wait).
+// UX15: cap the requested emulation rate without rebuilding Azahar. This does not
+// guarantee that heavy games can reach 8x; it only prevents exceeding the target.
+let gb15SpeedTarget = 1;
+let gb15LastFrameStart = 0;
+function gb15SetSpeed(value) {
+  const n=Number(value);
+  gb15SpeedTarget=Number.isFinite(n) ? Math.min(8,Math.max(.5,Math.round(n*2)/2)) : 1;
+  gb15LastFrameStart=0;
+}
 function instrumentTicks() {
   const mc = self.__gb3ds_mc;
   if (!mc || mc.__gbWrapped) return;
@@ -289,13 +298,23 @@ function instrumentTicks() {
   if (!handler) return;
   mc.__gbWrapped = true;
   mc.port1.onmessage = (e) => {
-    const t0 = performance.now();
-    handler(e);
-    const dt = performance.now() - t0;
-    perf.ticks++;
-    perf.tickMs += dt;
-    if (dt > perf.tickMax) perf.tickMax = dt;
-    if (performance.now() - lastPerfFlush >= 1000) flushPerf();
+    // One queued tick at a time: the frontend schedules the NEXT tick itself.
+    // For <=1x C++ retains its normal 60fps limiter; for >1x it is disabled.
+    const now=performance.now();
+    const interval=1000/(59.83*gb15SpeedTarget);
+    const wait=gb15LastFrameStart ? Math.max(0,gb15LastFrameStart+interval-now) : 0;
+    const tick=() => {
+      const t0 = performance.now();
+      handler.call(mc.port1,e);
+      const dt = performance.now() - t0;
+      gb15LastFrameStart=t0;
+      perf.ticks++;
+      perf.tickMs += dt;
+      if (dt > perf.tickMax) perf.tickMax = dt;
+      if (performance.now() - lastPerfFlush >= 1000) flushPerf();
+    };
+    // Unthrottled event-loop scheduling avoids an extra timer on the hot path.
+    if (wait > 1) setTimeout(tick,Math.ceil(wait)); else tick();
   };
 }
 instrumentGL();
@@ -607,6 +626,7 @@ async function createWithMemoryRetry(options) {
 }
 
 self.onmessage = async ({ data }) => {
+  if (data.type === 'set-speed') { gb15SetSpeed(data.value); instrumentTicks(); return; }
   if (data.type === 'sync') {
     syncSaves('richiesta').catch((err) => logLine(`[gaemboy] sincronizzazione fallita: ${err}`));
     return;

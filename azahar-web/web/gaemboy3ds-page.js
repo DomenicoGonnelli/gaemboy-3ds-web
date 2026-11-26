@@ -127,6 +127,26 @@ if (!crossOriginIsolated) {
   notice('La pagina non è cross-origin isolated (servono header COOP/COEP): i thread WASM non possono partire.', 'bad');
 }
 
+// UX15 speed controls: selected target persists, actual multiplier is set only after user action.
+const GB15_SPEED_KEY = 'gaemboy3ds-speed-target-v1';
+function gb15ReadSpeed() {
+  try { const value=Number(localStorage.getItem(GB15_SPEED_KEY)); return value>=0.5 && value<=8 && Number.isInteger(value*2) ? value : 2; }
+  catch { return 2; }
+}
+let gb15SelectedSpeed = gb15ReadSpeed();
+let gb15SpeedEnabled = false;
+function gb15EffectiveSpeed() { return gb15SpeedEnabled ? gb15SelectedSpeed : 1; }
+function gb15ApplySpeed() {
+  const speed = gb15EffectiveSpeed();
+  if (memory) writeI('throttle', speed > 1 ? 0 : 1);
+  worker?.postMessage({type:'set-speed',value:speed});
+  const fast = document.getElementById('gb13-quick-fast');
+  fast?.setAttribute('aria-pressed',String(gb15SpeedEnabled));
+  return speed;
+}
+function gb15PersistSpeed() {
+  try { localStorage.setItem(GB15_SPEED_KEY,String(gb15SelectedSpeed)); } catch {}
+}
 let worker = null;
 let memory = null;
 let base = 0;
@@ -359,6 +379,7 @@ function boot(file, managedCache = false) {
       case 'ready':
         memory = data.memory;
         base = data.state;
+        gb15ApplySpeed();
         cameraBuffer = data.cameraBuffer;
         if (data.stateSize !== STATE_SIZE) {
           notice(`Struct condivisa incoerente (${data.stateSize} B, attesi ${STATE_SIZE}): ricompila.`, 'bad');
@@ -997,9 +1018,9 @@ for (const id of ['demo', 'demo3d']) {
     .catch(hide);
 }
 $('throttle').onclick = () => {
-  const next = readI('throttle') ? 0 : 1;
-  writeI('throttle', next);
-  $('throttle').textContent = next ? 'Velocità: 60 fps' : 'Velocità: massima';
+  gb15SpeedEnabled = !gb15SpeedEnabled;
+  const speed=gb15ApplySpeed();
+  $('throttle').textContent = speed === 1 ? 'Velocità: 60 fps' : `Velocità richiesta: ${String(speed).replace('.',',')}×`;
 };
 $('audio').onclick = async () => {
   audioOn = !audioOn;
@@ -1013,6 +1034,7 @@ function openGameMenu() {
   if (!document.body.classList.contains('playing') || gameMenu.open) return;
   resetInput();
   gb13CloseSettings();
+  gb15CloseSpeedPanel();
   $('menu-title').textContent = $('game-title').textContent || 'Gioco in pausa';
   gameMenu.showModal();
   refreshFeatureControls();
@@ -1058,6 +1080,7 @@ gameMenu.addEventListener('cancel', (e) => {
 gameMenu.addEventListener('close', () => {
   gb14CloseGallery();
   gb13CloseSettings();
+  gb15CloseSpeedPanel();
   mappingAction = null;
   resetInput();
   refreshFeatureControls();
@@ -1079,6 +1102,7 @@ function gb13CloseSettings() {
 }
 function gb13OpenSettings(title = 'Impostazioni', detailsId = null) {
   gb14CloseGallery();
+  gb15CloseSpeedPanel();
   gameMenu.classList.add('gb13-settings-open');
   $('gb13-settings-panel').hidden = false;
   $('gb13-pause-actions').hidden = true;
@@ -1099,21 +1123,50 @@ function gb13UpdateQuickAvailability() {
   $('gb13-quick-mic').disabled = !running || mediaBusy;
   // Link-cable emulation is not implemented by the Azahar web core.
   $('gb13-quick-link').disabled = true;
-  $('gb13-quick-rotate').disabled = !document.body.classList.contains('gb3-input-mobile') ||
-    typeof screen.orientation?.lock !== 'function';
-  $('gb13-quick-fast').setAttribute('aria-pressed', String(running && readI('throttle') === 0));
+  $('gb13-quick-fast').setAttribute('aria-pressed', String(running && gb15SpeedEnabled));
 }
 $('gb13-settings-back').onclick = gb13CloseSettings;
 $('gb14-open-keys').onclick = () => gb13OpenSettings('Comandi e tastiera','keyboard-settings');
 $('gb13-quick-cheats').onclick = () => gb13OpenSettings('Codici Cheat','gb13-cheat-details');
-$('gb13-quick-speed').onclick = () => gb13OpenSettings('Imposta velocità');
+// UX15 speed selection: slider and quick-toggle share the same worker pacing controller.
+function gb15CloseSpeedPanel() {
+  $('gb15-speed-panel').hidden = true;
+  $('gb13-pause-actions').hidden = false;
+}
+function gb15SpeedText(value) { return value.toFixed(1).replace('.',',')+'×'; }
+function gb15UpdateSpeedLabel() {
+  $('gb15-speed-output').textContent = gb15SpeedText(Number($('gb15-speed-range').value));
+}
+$('gb13-quick-speed').onclick = () => {
+  gb14CloseGallery();
+  gb13CloseSettings();
+  $('gb13-pause-actions').hidden = true;
+  $('gb15-speed-panel').hidden = false;
+  $('gb15-speed-range').value = String(gb15SelectedSpeed);
+  gb15UpdateSpeedLabel();
+  $('gb15-speed-range').focus({preventScroll:true});
+};
+$('gb15-speed-back').onclick = gb15CloseSpeedPanel;
+$('gb15-speed-range').addEventListener('input',gb15UpdateSpeedLabel);
+$('gb15-speed-apply').onclick = () => {
+  gb15SelectedSpeed = Number($('gb15-speed-range').value);
+  gb15SpeedEnabled = gb15SelectedSpeed !== 1;
+  gb15PersistSpeed();
+  gb15ApplySpeed();
+  gb15CloseSpeedPanel();
+  gb13Feedback(`Velocità richiesta: ${gb15SpeedText(gb15EffectiveSpeed())}. La velocità reale dipende dal dispositivo.`);
+};
+$('gb15-speed-default').onclick = () => {
+  $('gb15-speed-range').value = '1';
+  $('gb15-speed-apply').click();
+};
 $('gb13-quick-save').onclick = () => { void gb14OpenGallery('save'); };
 $('gb13-quick-load').onclick = () => { void gb14OpenGallery('load'); };
 $('gb13-quick-fast').onclick = () => {
   if (!memory || $('gb13-quick-fast').disabled) return;
   $('throttle').click();
   gb13UpdateQuickAvailability();
-  gb13Feedback(readI('throttle') ? 'Velocità normale.' : 'Velocità aumentata.');
+  gb13Feedback('Velocità richiesta: '+gb15SpeedText(gb15EffectiveSpeed())+'.');
 };
 $('gb13-quick-mic').onclick = () => {
   if ($('mic-toggle').disabled) return;
@@ -1131,14 +1184,6 @@ $('gb13-quick-screenshot').onclick = async () => {
   link.click();
   setTimeout(() => URL.revokeObjectURL(url),60000);
   gb13Feedback('Screenshot acquisito.');
-};
-$('gb13-quick-rotate').onclick = async () => {
-  if ($('gb13-quick-rotate').disabled) return;
-  try {
-    const next = screen.orientation.type.startsWith('landscape') ? 'portrait' : 'landscape';
-    await screen.orientation.lock(next);
-    gb13Feedback('Orientamento aggiornato.');
-  } catch (_) { gb13Feedback('Il browser non consente la rotazione da questa pagina.',true); }
 };
 // Forward core status messages to the visible quick-action footer.
 new MutationObserver(() => {
@@ -1334,6 +1379,7 @@ async function gb14OpenGallery(mode) {
     return;
   }
   gb13CloseSettings();
+  gb15CloseSpeedPanel();
   gb14GalleryMode = mode;
   $('gb13-pause-actions').hidden = true;
   $('gb14-state-gallery').hidden = false;

@@ -1,6 +1,4 @@
-GAEMBOY 3DS — gameplay UX 13
-Base: feature/gaemboy-3ds-home-v2, incremental over UX12
-UI: screen-only desktop, touch mobile/tablet, Gaemboy-style fullscreen pause menu
-Core/ROM cache unchanged
-
-Gameplay UX14: historical quick save gallery (12 slots), previews and load selection; remove settings action.
+GAEMBOY 3DS - Gameplay UX15
+Base: Gameplay UX14
+Save state cards enlarged; speed target slider 0.5x-8x; rotation action removed.
+No modifications to core Azahar or ROM cache.
